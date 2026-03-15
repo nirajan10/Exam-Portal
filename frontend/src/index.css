@@ -1,0 +1,79 @@
+/* ── CSS custom properties ──────────────────────────────────────────────────── */
+
+:root {
+  /* bg-white / surface bg-slate-50 / text text-slate-900 */
+  --page-bg:    #ffffff;
+  --card-bg:    #f8fafc;
+  --card-bg2:   #f1f5f9;
+  --border:     #e2e8f0;
+  --text:       #0f172a;       /* slate-900 — headings, labels */
+  --text-body:  #1e293b;       /* slate-800 — body/question text (softer) */
+  --text-muted: #64748b;
+  --input-bg:   #ffffff;
+  --input-border: #cbd5e1;
+}
+
+html[data-theme='dark'] {
+  /* bg-gray-950 / surface bg-slate-900 / text text-slate-100 */
+  --page-bg:    #030712;
+  --card-bg:    #0f172a;
+  --card-bg2:   #1e293b;
+  --border:     #334155;
+  --text:       #f1f5f9;       /* slate-100 */
+  --text-body:  #e2e8f0;       /* slate-200 — softer body text */
+  --text-muted: #94a3b8;
+  --input-bg:   #0f172a;
+  --input-border: #475569;
+}
+
+/* ── Base reset ────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--page-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+#root {
+  min-height: 100vh;
+  background-color: inherit;
+}
+
+/* ── Dark mode: form element visibility ────────────────────────────────────── */
+/* Applies to inputs/textareas that do NOT override color/background via inline
+   styles. Components that set inline styles are unaffected (inline wins).    */
+
+html[data-theme='dark'] input:not([type='checkbox']):not([type='radio']):not([type='file']),
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select {
+  color: #f1f5f9;
+  background-color: #0f172a;
+  border-color: #475569;
+}
+
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: #64748b;
+}
+
+/* ── Scrollbar — subtle dark version ───────────────────────────────────────── */
+
+html[data-theme='dark'] ::-webkit-scrollbar { width: 8px; height: 8px; }
+html[data-theme='dark'] ::-webkit-scrollbar-track  { background: #1e293b; }
+html[data-theme='dark'] ::-webkit-scrollbar-thumb  { background: #475569; border-radius: 4px; }
+html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover { background: #64748b; }
