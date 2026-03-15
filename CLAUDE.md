@@ -1,6 +1,6 @@
 # Exam Portal
 
-A secure online exam platform where teachers create exams with MCQ and coding questions. Students submit answers anonymously; coding questions run in isolated Docker sandboxes.
+A secure online exam platform where teachers create exams with MCQ and coding questions. Students submit answers without auth; coding questions run in isolated Docker sandboxes.
 
 ## Tech Stack
 
@@ -21,13 +21,16 @@ backend/
   database/     GORM init + AutoMigrate (order matters — see file)
   models/       GORM structs; source of truth for DB schema
   handlers/     one file per resource; all share *Handler receiver
-  middleware/   JWT validation + teacherID extraction
+  middleware/   JWT validation + role extraction
   runner/       Docker sandbox manager — most security-sensitive code
-  routes/       public vs. JWT-protected route split
+  routes/       public / JWT-protected / admin route split
+  seed/         superadmin bootstrap on startup
 
 frontend/src/
   api/client.ts single Axios instance + all TypeScript interfaces + API helpers
   pages/        route-level components (one per page)
+  components/   shared UI (Navbar, ProtectedRoute, TeacherLayout)
+  contexts/     ThemeContext (light/dark mode)
 ```
 
 ## Build & Run
@@ -55,16 +58,18 @@ docker compose build frontend
 - Backend API is on **port 8080** (`docker-compose.yml:37`)
 - Nginx proxies `/api/` → `backend:8080` — no CORS needed in production (`frontend/nginx.conf:17`)
 - Backend mounts `/var/run/docker.sock` to spawn code execution containers (`docker-compose.yml:30`)
-- First teacher must self-register via `POST /api/auth/register` — no seed data
+- Superadmin bootstrapped from `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars at startup (`seed/seed.go:15`); teachers are created by admins, not self-registered (`handlers/auth.go:14`)
 - DB schema auto-migrates on backend startup (`database/database.go:18`)
 
 ## API Surface
 
 | Visibility | Routes |
 |-----------|--------|
-| Public | `POST /api/auth/register`, `POST /api/auth/login` |
-| Public | `GET /api/exams/:id/public`, `POST /api/submissions` |
-| JWT-protected | `/api/exams`, `/api/question-sets`, `/api/questions`, `/api/submissions` (GET), `/api/execute` |
+| Public | `POST /api/auth/login` |
+| Public | `GET /api/exams/active`, `GET /api/exams/:id/public`, `POST /api/exams/:id/verify-pin`, `POST /api/exams/:id/join` |
+| Public | `POST /api/submissions`, `POST /api/submissions/import`, `POST /api/execute/student` |
+| JWT-protected | `/api/exams`, `/api/question-sets`, `/api/questions`, `/api/submissions` (GET/PATCH/DELETE), `/api/execute` |
+| Admin-only | `/api/admin/teachers` (CRUD + password reset + activate/deactivate) |
 
 Student answers submitted to `POST /api/submissions` require no auth — name + email provided in body.
 

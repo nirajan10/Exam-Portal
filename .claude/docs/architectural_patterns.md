@@ -51,12 +51,12 @@ All models follow this pattern (reference: `models/teacher.go`):
 
 - PK: `ID uint \`gorm:"primaryKey"\``
 - FKs: `ExamID uint \`gorm:"not null;index"\`` + sibling `Exam Exam \`gorm:"foreignKey:ExamID" json:"-"\``
-- Secret fields: `json:"-"` tag (e.g., `HashedPassword`, `CorrectAnswer` in teacher responses)
+- Secret fields: `json:"-"` tag (e.g., `HashedPassword`, parent relations in teacher responses)
 - Nullable until set: pointer type, e.g., `Score *float64` (`models/submission.go:13`)
 - JSONB columns: `datatypes.JSON` from `gorm.io/datatypes` (`models/question.go:19`)
 - Enum types: typed `string` constant + `const` block (`models/question.go:7-10`)
 
-AutoMigrate order in `database/database.go:19-25` must respect FK dependencies (Teacher → Exam → QuestionSet → Question → Submission).
+AutoMigrate order in `database/database.go:19-25` must respect FK dependencies (Teacher → Exam → QuestionSet → Question → Submission → SubmissionAnswer).
 
 ---
 
@@ -90,19 +90,55 @@ All backend calls go through `frontend/src/api/client.ts`. The pattern is:
 
 - One exported helper function per endpoint, typed with the response interface
 - All helpers use `.then(r => r.data)` to unwrap Axios response
-- Access token held in module-scope variable (not `localStorage`) — `client.ts:4`
-- `setAccessToken()` called from login/register handlers after success — `client.ts:6`
-- `withCredentials: true` on the Axios instance for cookie support — `client.ts:11`
+- Access token held in both a module-scope variable (fast reads) and `localStorage` (survives page refresh) — `client.ts:4-8`
+- `setAccessToken()` called from login handler after success — `client.ts:6`
+- Global 401 response interceptor forces logout; skipped for student-facing paths — `client.ts:20-30`
 
-Add new endpoints here, not inline in page components.
+Add new endpoints here, not inline in page components. Add corresponding TypeScript interfaces in the same file.
 
 ---
 
 ## 8. Route Authorization Split
 
-`routes/routes.go` has two groups:
+`routes/routes.go` has three groups:
 
-1. **Public group** (`api`) — no middleware: auth endpoints, `GET /exams/:id/public`, `POST /submissions`
-2. **Protected group** (`protected`) — wraps `middleware.JWTMiddleware(jwtSecret)`: all teacher CRUD + `/execute`
+1. **Public group** (`api`) — no middleware: login, student join/submit/execute, public exam view
+2. **Protected group** (`protected`) — wraps `middleware.JWTMiddleware(jwtSecret)`: all teacher CRUD, grading, analytics, profile
+3. **Admin group** (`admin`) — wraps `JWTMiddleware` + `RequireRole("superadmin")`: teacher account management (`routes/routes.go:70-80`)
 
-Adding a new teacher-only route: attach to `protected` group. Adding a student route: attach to `api` group and ensure the handler uses a DTO that strips `CorrectAnswer`.
+Adding a new teacher-only route: attach to `protected` group. Adding a student route: attach to `api` group and ensure the handler uses a DTO that strips `CorrectAnswer`. Adding a superadmin route: attach to `admin` group.
+
+---
+
+## 9. Cascading Delete/Create via Transactions
+
+Operations that touch multiple related tables always use a GORM transaction to stay atomic:
+
+- Deep delete (exam): submission_answers → submissions → questions → question_sets → exam — `handlers/exam.go:210-240`
+- Question delete: submission_answers first, then question — `handlers/question.go:115-130`
+- Bulk submission: Submission row + all SubmissionAnswer rows in one `db.Transaction` — `handlers/submission.go:90-140`
+- QuestionSet duplication: clone set + all child questions atomically — `handlers/question_set.go:95-130`
+
+Pattern: `h.db.Transaction(func(tx *gorm.DB) error { ... })`. Always operate on `tx`, not `h.db`, inside the closure.
+
+---
+
+## 10. Fail-Fast Batch Validation
+
+When importing many rows (CSV upload, offline submission), validate **all** rows before inserting any. Return a list of per-row errors so the user can fix everything in one pass.
+
+- CSV questions: all rows validated, errors collected, bulk insert only if zero errors — `handlers/upload.go:50-120`
+- Offline import envelope: SHA-256 tamper check before any DB writes — `handlers/submission.go:430-460`
+
+---
+
+## 11. Deterministic Student Session IDs
+
+Student session IDs and question-set assignments are derived deterministically from (JWT_SECRET, examId, email) so the same student always lands on the same set and can resume:
+
+- Algorithm: `HMAC-SHA256(JWT_SECRET, "examId|email")` — `handlers/join.go:45-60`
+- Session ID: hex(digest[:4]) prefixed with `"STU-"`
+- Set assignment: `uint32(digest[4:8]) % len(sets)`
+- Reproducible: calling join twice returns identical session_id and set
+
+Never use random values for these — determinism is intentional and required for idempotent rejoins.
