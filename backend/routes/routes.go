@@ -54,6 +54,15 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Get("/me", h.GetMe)
 	protected.Post("/me/profile-pic", h.UpdateProfilePic)
 
+	// Mail settings — BYOM (Bring Your Own Mail) SMTP credentials
+	protected.Get("/me/mail-settings", h.GetMailSettings)
+	protected.Put("/me/mail-settings", h.SaveMailSettings)
+	protected.Post("/me/mail-settings/test", h.TestMailConnection)
+
+	// Student performance reports
+	protected.Post("/reports/send/:id", h.SendReport)
+	protected.Post("/reports/send-all", h.SendAllReports)
+
 	// Submissions (teacher reads, grading, deletion)
 	protected.Get("/submissions", h.ListSubmissions)
 	protected.Get("/submissions/:id", h.GetSubmission)
