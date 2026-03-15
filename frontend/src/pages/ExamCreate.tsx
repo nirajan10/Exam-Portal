@@ -124,6 +124,7 @@ export default function ExamCreate() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [durationMinutes, setDurationMinutes] = useState<number | ''>(60)
+  const [bufferMinutes, setBufferMinutes] = useState<number | ''>(0)
 
   const [randomizeOrder, setRandomizeOrder] = useState(false)
   const [cameraProctoring, setCameraProctoring] = useState(false)
@@ -167,6 +168,7 @@ export default function ExamCreate() {
         title: title.trim(),
         description,
         duration_minutes: Number(durationMinutes),
+        buffer_duration_minutes: Number(bufferMinutes) || 0,
         randomize_question_order: randomizeOrder,
         camera_proctoring_required: cameraProctoring,
         violation_limit: Number(violationLimit) || 0,
@@ -231,10 +233,10 @@ export default function ExamCreate() {
           </div>
 
           {/* Duration */}
-          <div>
+          <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>
               Duration (minutes) <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>
-              <FieldHint text="The total time a student has once they click Start. The countdown begins immediately." />
+              <FieldHint text="The exam window after the buffer ends. The countdown shown to teachers includes both." />
             </label>
             <input
               type="number"
@@ -249,6 +251,29 @@ export default function ExamCreate() {
               style={{ ...inputStyle(!!errors.duration), width: 140 }}
             />
             <FieldError message={errors.duration ?? ''} />
+          </div>
+
+          {/* Buffer Duration */}
+          <div>
+            <label style={labelStyle}>
+              Buffer Duration (minutes)
+              <FieldHint text="Lead-in period before questions are revealed. Use this to let all students join before the clock starts." />
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={60}
+              value={bufferMinutes}
+              onChange={e => setBufferMinutes(e.target.value === '' ? '' : Number(e.target.value))}
+              placeholder="0"
+              style={{ ...inputStyle(), width: 140 }}
+            />
+            {Number(bufferMinutes) > 0 && (
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: isDark ? '#94a3b8' : '#6b7280' }}>
+                Students will wait <strong>{bufferMinutes} min</strong> before questions appear.
+                Total exam window: <strong>{Number(durationMinutes || 0) + Number(bufferMinutes)} min</strong>.
+              </p>
+            )}
           </div>
         </div>
 

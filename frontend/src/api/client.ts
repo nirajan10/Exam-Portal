@@ -104,6 +104,8 @@ export interface Teacher {
   is_active: boolean
   must_change_password: boolean
   created_at: string
+  smtp_sender_name: string
+  smtp_email: string
 }
 
 export interface LoginResponse {
@@ -223,6 +225,8 @@ export interface Submission {
   submitted_at: string
   total_score: number
   status: 'graded' | 'pending_grading'
+  /** ISO timestamp of when the student's report email was sent; null if not yet sent. */
+  notified_at: string | null
   /** Populated only by getSubmission() (grading view) */
   answers?: SubmissionAnswer[]
 }
@@ -395,6 +399,43 @@ export interface ExamAnalytics {
 
 export const getExamAnalytics = (examId: string | number): Promise<ExamAnalytics> =>
   api.get<ExamAnalytics>(`/exams/${examId}/analytics`).then(r => r.data)
+
+// ── Mail settings ─────────────────────────────────────────────────────────────
+
+export interface MailSettings {
+  smtp_sender_name: string
+  smtp_email: string
+  /** true when an encrypted app password exists in the DB (never the raw value) */
+  password_is_set: boolean
+}
+
+export interface SaveMailSettingsPayload {
+  smtp_sender_name: string
+  smtp_email: string
+  /** Plain-text app password. If empty, the stored password is unchanged. */
+  app_password: string
+}
+
+export const getMailSettings = (): Promise<MailSettings> =>
+  api.get<MailSettings>('/me/mail-settings').then(r => r.data)
+
+export const saveMailSettings = (payload: SaveMailSettingsPayload): Promise<MailSettings> =>
+  api.put<MailSettings>('/me/mail-settings', payload).then(r => r.data)
+
+/** Sends a test email to the teacher's own address. Throws on SMTP failure. */
+export const testMailConnection = (): Promise<{ sent_to: string }> =>
+  api.post<{ sent_to: string }>('/me/mail-settings/test').then(r => r.data)
+
+// ── Performance reports ───────────────────────────────────────────────────────
+
+/** Send a graded report to a single student. Returns the updated Submission.
+ *  pdfBase64: base64-encoded PDF to attach (generated in browser); if omitted the backend generates one. */
+export const sendReport = (submissionId: number, pdfBase64?: string): Promise<Submission> =>
+  api.post<Submission>(`/reports/send/${submissionId}`, pdfBase64 ? { pdf_data: pdfBase64 } : undefined).then(r => r.data)
+
+/** Queue reports for all graded, unnotified submissions of an exam (background). */
+export const sendAllReports = (examId: number): Promise<{ queued: number; message: string }> =>
+  api.post<{ queued: number; message: string }>(`/reports/send-all?exam_id=${examId}`).then(r => r.data)
 
 // Student execution — public, checks exam's max_code_runs on the backend.
 // `stdin` is optional program input; when non-empty the backend uses base64-embed

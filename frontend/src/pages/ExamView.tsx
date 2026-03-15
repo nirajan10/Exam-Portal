@@ -3,9 +3,11 @@ import { useParams, Link } from 'react-router-dom'
 import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
-  getSubmissions, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
+  getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
+  getMailSettings, sendReport, sendAllReports,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
+import { generateStudentPDF } from '../utils/generateStudentPDF'
 import { useTheme } from '../contexts/ThemeContext'
 import ResultsAnalytics from './ResultsAnalytics'
 
@@ -945,6 +947,11 @@ export default function ExamView() {
   const offlineInputRef = useRef<HTMLInputElement>(null)
   const [importingOffline, setImportingOffline] = useState(false)
 
+  // Mail / report state
+  const [mailConfigured, setMailConfigured] = useState(false)
+  const [sendingReports, setSendingReports] = useState<Set<number>>(new Set())
+  const [bulkSending, setBulkSending] = useState(false)
+
   // Dark-mode aware card background for submissions table
   const rowBg = isDark ? '#1e293b' : 'white'
   const mutedText = isDark ? '#94a3b8' : '#6b7280'
@@ -986,6 +993,14 @@ export default function ExamView() {
 
   useEffect(reload, [id])
 
+  // Check whether the teacher has configured SMTP credentials.
+  // Used to enable/disable the Send Report buttons.
+  useEffect(() => {
+    getMailSettings()
+      .then(s => setMailConfigured(s.smtp_email !== '' && s.password_is_set))
+      .catch(() => setMailConfigured(false))
+  }, [])
+
   // Live countdown — ticks every second while the exam is active.
   // Automatically stops the exam (server + local state) when time runs out.
   useEffect(() => {
@@ -993,7 +1008,11 @@ export default function ExamView() {
       setTimeLeft(null)
       return
     }
-    const endMs = new Date(exam.started_at).getTime() + exam.duration_minutes * 60 * 1000
+    // Total window = buffer period + exam period. The countdown runs until
+    // students can no longer submit, not just until the exam period opens.
+    const endMs = new Date(exam.started_at).getTime()
+      + (exam.buffer_duration_minutes ?? 0) * 60 * 1000
+      + exam.duration_minutes * 60 * 1000
     const compute = () => Math.max(0, Math.floor((endMs - Date.now()) / 1000))
     setTimeLeft(compute())
     const interval = setInterval(() => {
@@ -1007,7 +1026,7 @@ export default function ExamView() {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [exam?.id, exam?.is_active, exam?.started_at, exam?.duration_minutes])
+  }, [exam?.id, exam?.is_active, exam?.started_at, exam?.duration_minutes, exam?.buffer_duration_minutes])
 
   const handleAddSet = async () => {
     if (!exam || !newSetTitle.trim()) return
@@ -1041,6 +1060,52 @@ export default function ExamView() {
       alert('Failed to update exam status.')
     } finally {
       setTogglingStatus(false)
+    }
+  }
+
+  const handleSendReport = async (sub: Submission) => {
+    setSendingReports(prev => new Set(prev).add(sub.id))
+    try {
+      // Fetch full submission (with answers) then generate the analysis PDF in the browser.
+      let pdfBase64: string | undefined
+      if (exam) {
+        try {
+          const fullSub = await getSubmission(sub.id)
+          const blob = await generateStudentPDF(exam, fullSub)
+          const buf = await blob.arrayBuffer()
+          pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+        } catch {
+          // PDF generation failed — backend will fall back to its own basic PDF
+        }
+      }
+      const updated = await sendReport(sub.id, pdfBase64)
+      setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s))
+      showToast(`Report sent to ${sub.student_email}`, 'success')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'Failed to send report. Check your mail settings.'
+      showToast(msg, 'error')
+    } finally {
+      setSendingReports(prev => { const s = new Set(prev); s.delete(sub.id); return s })
+    }
+  }
+
+  const handleSendAllReports = async () => {
+    if (!id) return
+    setBulkSending(true)
+    try {
+      const res = await sendAllReports(Number(id))
+      if (res.queued === 0) {
+        showToast('No pending reports — all graded submissions have already been notified.', 'success')
+      } else {
+        showToast(res.message, 'success')
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'Failed to queue reports. Check your mail settings.'
+      showToast(msg, 'error')
+    } finally {
+      setBulkSending(false)
     }
   }
 
@@ -1501,7 +1566,28 @@ export default function ExamView() {
           />
 
           {/* Toolbar row */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+            {/* Release All Graded Reports */}
+            <button
+              onClick={handleSendAllReports}
+              disabled={bulkSending || !mailConfigured}
+              title={
+                !mailConfigured
+                  ? 'Please configure your Mail Settings in profile settings to use this feature.'
+                  : 'Send performance reports to all graded students who haven\'t been notified yet'
+              }
+              style={{
+                padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                background: bulkSending || !mailConfigured ? '#e5e7eb' : '#0f9d58',
+                color: bulkSending || !mailConfigured ? '#9ca3af' : 'white',
+                border: 'none', borderRadius: 7,
+                cursor: bulkSending || !mailConfigured ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {bulkSending ? '⏳ Sending…' : '📨 Release All Graded Reports'}
+            </button>
+
             <button
               onClick={() => offlineInputRef.current?.click()}
               disabled={importingOffline}
@@ -1532,6 +1618,7 @@ export default function ExamView() {
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Score</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Status</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Submitted</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Report</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Action</th>
                 </tr>
               </thead>
@@ -1577,6 +1664,44 @@ export default function ExamView() {
                     </td>
                     <td style={{ padding: '10px 12px', color: mutedText, fontSize: 13 }}>
                       {new Date(s.submitted_at).toLocaleString()}
+                    </td>
+                    {/* Send Report cell */}
+                    <td style={{ padding: '10px 12px' }}>
+                      {(() => {
+                        const isGraded = s.status === 'graded'
+                        const isSending = sendingReports.has(s.id)
+                        const disabled = isSending || !mailConfigured || !isGraded
+                        const tooltip = !mailConfigured
+                          ? 'Please configure your Mail Settings in profile settings to use this feature.'
+                          : !isGraded
+                          ? 'Only graded submissions can be reported.'
+                          : isSending
+                          ? 'Sending…'
+                          : s.notified_at
+                          ? `Resend report (last sent ${new Date(s.notified_at).toLocaleDateString()})`
+                          : 'Send performance report to student'
+                        return (
+                          <button
+                            onClick={() => !disabled && handleSendReport(s)}
+                            disabled={disabled}
+                            title={tooltip}
+                            style={{
+                              padding: '4px 10px', fontSize: 13, fontWeight: 600,
+                              border: 'none', borderRadius: 5,
+                              cursor: disabled ? 'not-allowed' : 'pointer',
+                              background: disabled ? '#f3f4f6'
+                                : s.notified_at ? '#dcfce7'
+                                : '#eff6ff',
+                              color: disabled ? '#9ca3af'
+                                : s.notified_at ? '#15803d'
+                                : '#1d4ed8',
+                              display: 'flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            {isSending ? '⏳' : s.notified_at ? '✓ Sent' : '📩'}
+                          </button>
+                        )
+                      })()}
                     </td>
                     <td style={{ padding: '10px 12px' }}>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

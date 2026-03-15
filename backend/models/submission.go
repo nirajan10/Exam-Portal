@@ -28,6 +28,9 @@ type Submission struct {
 	SubmittedAt  time.Time        `                                                json:"submitted_at"`
 	TotalScore   float64          `gorm:"default:0"                                json:"total_score"`
 	Status       SubmissionStatus `gorm:"type:varchar(20);default:'pending_grading'" json:"status"`
+	// NotifiedAt is set when the teacher successfully emails the student's report.
+	// nil means no report email has been sent yet.
+	NotifiedAt *time.Time `json:"notified_at"`
 
 	// Answers is preloaded only when explicitly requested (e.g., grading view).
 	Answers []SubmissionAnswer `gorm:"foreignKey:SubmissionID" json:"answers,omitempty"`
