@@ -13,6 +13,7 @@ import ExamView from './pages/ExamView'
 import GradingView from './pages/GradingView'
 import StudentExam from './pages/StudentExam'
 import AdminStaff from './pages/AdminStaff'
+import AdminFeedback from './pages/AdminFeedback'
 import ForcePasswordChange from './pages/ForcePasswordChange'
 import ExamMonitor from './pages/ExamMonitor'
 
@@ -84,6 +85,7 @@ export default function App() {
             }
           >
             <Route path="/admin/manage-staff" element={<AdminStaff />} />
+            <Route path="/admin/feedback" element={<AdminFeedback />} />
           </Route>
 
           {/* ── Catch-all — send unknown paths back to the landing page ───── */}

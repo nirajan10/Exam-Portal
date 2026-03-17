@@ -86,6 +86,9 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	// Code execution sandbox
 	protected.Post("/execute", h.Execute)
 
+	// Teacher feedback
+	protected.Post("/feedback", h.CreateFeedback)
+
 	// ── Superadmin-only routes ────────────────────────────────────────────────
 	admin := api.Group("/admin",
 		middleware.JWTMiddleware(jwtSecret),
@@ -97,4 +100,8 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	admin.Patch("/teachers/:id/active", h.SetTeacherActive)
 	admin.Delete("/teachers/:id", h.DeleteTeacher)
 	admin.Get("/teachers/:id/exams", h.GetTeacherExams)
+
+	// Feedback management
+	admin.Get("/feedback", h.ListAllFeedback)
+	admin.Delete("/feedback/:id", h.DeleteFeedback)
 }

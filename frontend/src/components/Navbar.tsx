@@ -101,6 +101,7 @@ export default function Navbar() {
           {teacher?.role === 'superadmin' ? (
             <>
               <NavLink to="/admin/manage-staff" label="Staff Management" />
+              <NavLink to="/admin/feedback" label="Feedback" />
             </>
           ) : (
             <>
@@ -187,12 +188,6 @@ export default function Navbar() {
                   label="Profile Settings"
                   onClick={() => { setShowProfile(true); setOpen(false) }}
                 />
-                <MenuItem
-                  icon="🔒"
-                  label="Account Security"
-                  onClick={() => setOpen(false)}
-                  dimmed
-                />
               </div>
 
               <div style={{ borderTop: '1px solid #f3f4f6', padding: '4px 0' }}>
@@ -243,13 +238,12 @@ function NavLink({ to, label }: { to: string; label: string }) {
 // ── MenuItem helper ────────────────────────────────────────────────────────────
 
 function MenuItem({
-  icon, label, onClick, danger = false, dimmed = false,
+  icon, label, onClick, danger = false,
 }: {
   icon: string
   label: string
   onClick: () => void
   danger?: boolean
-  dimmed?: boolean
 }) {
   const [hovered, setHovered] = useState(false)
 
@@ -262,20 +256,15 @@ function MenuItem({
         display: 'flex', alignItems: 'center', gap: 10,
         width: '100%', padding: '9px 16px',
         background: hovered ? (danger ? '#fef2f2' : '#f9fafb') : 'transparent',
-        border: 'none', cursor: dimmed ? 'default' : 'pointer',
+        border: 'none', cursor: 'pointer',
         textAlign: 'left',
-        color: danger ? '#dc2626' : dimmed ? '#9ca3af' : '#374151',
+        color: danger ? '#dc2626' : '#374151',
         fontSize: 14, fontWeight: 500,
         transition: 'background 0.1s',
       }}
     >
       <span style={{ fontSize: 15, width: 18, textAlign: 'center' }}>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
-      {dimmed && (
-        <span style={{ fontSize: 10, background: '#f3f4f6', color: '#9ca3af', padding: '1px 6px', borderRadius: 9999, fontWeight: 600 }}>
-          soon
-        </span>
-      )}
     </button>
   )
 }
