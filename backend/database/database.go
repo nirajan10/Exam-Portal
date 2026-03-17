@@ -24,6 +24,7 @@ func Init(dsn string) (*gorm.DB, error) {
 		&models.Question{},
 		&models.Submission{},
 		&models.SubmissionAnswer{}, // must come after Submission (FK: submission_id)
+		&models.Feedback{},         // must come after Teacher (FK: teacher_id)
 	)
 	if err != nil {
 		return nil, err

@@ -662,7 +662,7 @@ export default function GradingView() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, fontSize: 13, color: muted }}>
         <Link to="/dashboard" style={{ color: muted, textDecoration: 'none' }}>Dashboard</Link>
         <span>›</span>
-        <Link to={`/exams/${examId}`} style={{ color: muted, textDecoration: 'none' }}>{exam.title}</Link>
+        <Link to={`/exams/${examId}?tab=submissions`} style={{ color: muted, textDecoration: 'none' }}>{exam.title}</Link>
         <span>›</span>
         <span style={{ color: text }}>Grade Submission</span>
       </div>
@@ -697,7 +697,7 @@ export default function GradingView() {
 
         {/* Right-side actions */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          <Link to={`/exams/${examId}`} style={{ textDecoration: 'none' }}>
+          <Link to={`/exams/${examId}?tab=submissions`} style={{ textDecoration: 'none' }}>
             <button style={{
               padding: '8px 18px', fontSize: 13, fontWeight: 600,
               background: isDark ? '#334155' : '#f3f4f6',
@@ -781,7 +781,7 @@ export default function GradingView() {
       {(manualAnswers.length > 0 || autoGraded.length > 0) && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           paddingTop: 16, borderTop: `1px solid ${border}` }}>
-          <Link to={`/exams/${examId}`} style={{ textDecoration: 'none' }}>
+          <Link to={`/exams/${examId}?tab=submissions`} style={{ textDecoration: 'none' }}>
             <button style={{
               padding: '10px 20px', fontSize: 14, fontWeight: 600,
               background: isDark ? '#334155' : '#f3f4f6',

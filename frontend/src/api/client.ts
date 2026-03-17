@@ -447,3 +447,26 @@ export const executeCodeForStudent = (
   stdin?: string,
 ): Promise<RunResult> =>
   api.post<RunResult>(`/exams/${examId}/execute`, { language, code, ...(stdin !== undefined ? { stdin } : {}) }).then(r => r.data)
+
+// ── Teacher feedback ──────────────────────────────────────────────────────────
+
+export type FeedbackType = 'bug' | 'suggestion' | 'usability' | 'performance' | 'other'
+
+export interface Feedback {
+  id: number
+  teacher_id: number
+  type: FeedbackType
+  subject: string
+  body: string
+  created_at: string
+  teacher?: { id: number; name: string; email: string; profile_pic: string }
+}
+
+export const createFeedback = (payload: { type: FeedbackType; subject: string; body: string }): Promise<Feedback> =>
+  api.post<Feedback>('/feedback', payload).then(r => r.data)
+
+export const listAllFeedback = (): Promise<Feedback[]> =>
+  api.get<Feedback[]>('/admin/feedback').then(r => r.data)
+
+export const deleteFeedback = (id: number): Promise<void> =>
+  api.delete(`/admin/feedback/${id}`).then(() => {})

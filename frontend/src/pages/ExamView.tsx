@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useSearchParams, Link } from 'react-router-dom'
 import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
@@ -922,12 +922,14 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' }
 
 export default function ExamView() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const { isDark } = useTheme()
   const [exam, setExam] = useState<Exam | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [newSetTitle, setNewSetTitle] = useState('')
   const [addingSetTo, setAddingSetTo] = useState<number | null>(null)
-  const [activeTab, setActiveTab] = useState<'questions' | 'submissions' | 'analytics'>('questions')
+  const initialTab = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
+  const [activeTab, setActiveTab] = useState<'questions' | 'submissions' | 'analytics'>(initialTab)
   const [uploadStates, setUploadStates] = useState<Record<number, SetUploadState>>({})
   const [collapsedSets, setCollapsedSets] = useState<Set<number>>(new Set())
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
