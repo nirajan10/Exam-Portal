@@ -14,6 +14,7 @@ import GradingView from './pages/GradingView'
 import StudentExam from './pages/StudentExam'
 import AdminStaff from './pages/AdminStaff'
 import ForcePasswordChange from './pages/ForcePasswordChange'
+import ExamMonitor from './pages/ExamMonitor'
 
 export default function App() {
   return (
@@ -63,6 +64,16 @@ export default function App() {
             <Route path="/exams/:id"                              element={<ExamView />}     />
             <Route path="/exams/:examId/grade/:submissionId"      element={<GradingView />}  />
           </Route>
+
+          {/* Live monitor — fullscreen, no navbar, but still protected */}
+          <Route
+            path="/exams/:id/monitor"
+            element={
+              <ProtectedRoute>
+                <ExamMonitor />
+              </ProtectedRoute>
+            }
+          />
 
           {/* ── Admin routes — superadmin role required ────────────────────── */}
           <Route

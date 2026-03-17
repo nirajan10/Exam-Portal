@@ -6,6 +6,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { getPublicExam, joinExam, submitExam, executeCodeForStudent, Exam, Question, QuestionSet, RunResult } from '../api/client'
 import { accessTokenKey } from './ExamLobby'
 import { useTheme } from '../contexts/ThemeContext'
+import DraggableCamera from '../components/DraggableCamera'
+import ChatPanel from '../components/ChatPanel'
+import DeviceSelector from '../components/DeviceSelector'
+import { useWebRTC } from '../hooks/useWebRTC'
 
 // ── Phase machine ─────────────────────────────────────────────────────────────
 
@@ -251,6 +255,7 @@ export default function StudentExam() {
   const showFsBlockerRef   = useRef(false)
   const fsGraceTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fsGraceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fsRepeatViolRef    = useRef<ReturnType<typeof setInterval> | null>(null)
 
   phaseRef.current           = phase
   violationCountRef.current  = violationCount
@@ -267,6 +272,137 @@ export default function StudentExam() {
 
   // assignedQuestions — set once when the student begins the exam; always an array, never undefined
   const [assignedQuestions, setAssignedQuestions] = useState<QuestionSet[]>([])
+
+  // ── WebRTC / camera proctoring ──────────────────────────────────────────
+  const [showStudentChat, setShowStudentChat] = useState(false)
+  const [studentAudioOn, setStudentAudioOn] = useState(false)
+  const [studentVideoOn, setStudentVideoOn] = useState(true)
+
+  const cameraRequired = exam?.camera_proctoring_required ?? false
+  const [cameraGranted, setCameraGranted] = useState(false)
+  const [studentAudioDeviceId, setStudentAudioDeviceId] = useState('')
+  const [studentVideoDeviceId, setStudentVideoDeviceId] = useState('')
+  const webrtcRoomId = `exam-${id}`
+
+  const {
+    localStream: studentLocalStream,
+    remoteStreams: studentRemoteStreams,
+    chatMessages: studentChatMessages,
+    connected: studentWsConnected,
+    disconnectedSince: studentDisconnectedSince,
+    myId: studentMyId,
+    kickedByTeacher: studentKickedByTeacher,
+    connect: studentConnect,
+    disconnect: studentDisconnect,
+    sendChat: studentSendChat,
+    toggleAudio: studentToggleAudio,
+    toggleVideo: studentToggleVideo,
+    switchDevices: studentSwitchDevices,
+  } = useWebRTC({
+    roomId: webrtcRoomId,
+    name: studentName || 'Student',
+    role: 'student',
+    enableVideo: cameraRequired,
+    enableAudio: cameraRequired,
+    audioDeviceId: studentAudioDeviceId,
+    videoDeviceId: studentVideoDeviceId,
+  })
+
+  // Connect WebRTC when entering exam phase with camera required.
+  useEffect(() => {
+    if (cameraRequired && phase === 'exam' && studentName && !studentWsConnected) {
+      studentConnect()
+    }
+  }, [cameraRequired, phase, studentName, studentWsConnected, studentConnect])
+
+  // Also connect during buffer phase so teacher can see students waiting.
+  useEffect(() => {
+    if (cameraRequired && phase === 'buffer' && studentName && !studentWsConnected) {
+      studentConnect()
+    }
+  }, [cameraRequired, phase, studentName, studentWsConnected, studentConnect])
+
+  // Disconnect on submission or unmount.
+  useEffect(() => {
+    if (phase === 'submitted' || phase === 'concluded') {
+      studentDisconnect()
+    }
+  }, [phase, studentDisconnect])
+
+  const handleStudentToggleAudio = () => { studentToggleAudio(); setStudentAudioOn(p => !p) }
+  const handleStudentToggleVideo = () => { studentToggleVideo(); setStudentVideoOn(p => !p) }
+
+  // Play teacher's audio so the student can hear the teacher.
+  const teacherAudioRefs = useRef<Map<string, HTMLAudioElement>>(new Map())
+  useEffect(() => {
+    const teacherStreams = studentRemoteStreams.filter(r => r.role === 'teacher')
+    // Attach new streams.
+    for (const rs of teacherStreams) {
+      let el = teacherAudioRefs.current.get(rs.participantId)
+      if (!el) {
+        el = document.createElement('audio')
+        el.autoplay = true
+        el.style.display = 'none'
+        document.body.appendChild(el)
+        teacherAudioRefs.current.set(rs.participantId, el)
+      }
+      if (el.srcObject !== rs.stream) {
+        el.srcObject = rs.stream
+        el.play().catch(() => {})
+      }
+    }
+    // Remove stale entries.
+    const activeIds = new Set(teacherStreams.map(r => r.participantId))
+    teacherAudioRefs.current.forEach((el, pid) => {
+      if (!activeIds.has(pid)) {
+        el.srcObject = null
+        el.remove()
+        teacherAudioRefs.current.delete(pid)
+      }
+    })
+  }, [studentRemoteStreams])
+
+  // Cleanup audio elements on unmount.
+  useEffect(() => {
+    return () => {
+      teacherAudioRefs.current.forEach(el => { el.srcObject = null; el.remove() })
+      teacherAudioRefs.current.clear()
+    }
+  }, [])
+
+  // ── 5-minute disconnect grace period (camera exams only) ──────────────────
+  const DISCONNECT_GRACE_MS = 5 * 60 * 1000
+  const [disconnectCountdown, setDisconnectCountdown] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!cameraRequired || phase !== 'exam') return
+    if (!studentDisconnectedSince) {
+      // Reconnected — clear countdown.
+      setDisconnectCountdown(null)
+      return
+    }
+
+    // Start counting down.
+    const tick = () => {
+      const elapsed = Date.now() - studentDisconnectedSince
+      const remaining = Math.max(0, Math.ceil((DISCONNECT_GRACE_MS - elapsed) / 1000))
+      setDisconnectCountdown(remaining)
+      if (remaining <= 0) {
+        // Grace period expired — auto-submit.
+        submitRef.current?.()
+      }
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [cameraRequired, phase, studentDisconnectedSince])
+
+  // ── Auto-submit when kicked by teacher ──────────────────────────────────
+  useEffect(() => {
+    if (studentKickedByTeacher && phase === 'exam') {
+      submitRef.current?.()
+    }
+  }, [studentKickedByTeacher, phase])
 
   // ── Load exam + access-token gate ─────────────────────────────────────────
 
@@ -340,7 +476,9 @@ export default function StudentExam() {
       const isNetworkErr = !(err as { response?: unknown })?.response
       setSubmitError(
         isNetworkErr
-          ? 'No connection to the server. Your answers are saved in your browser — use "Download Backup" below.'
+          ? (cameraRequired
+              ? 'No connection to the server. Reconnecting automatically — your answers are saved.'
+              : 'No connection to the server. Your answers are saved in your browser — use "Download Backup" below.')
           : 'Submission failed. Please check your connection and try again.',
       )
       setShowOfflineBtn(true)
@@ -360,6 +498,7 @@ export default function StudentExam() {
   const resumeFromFsBlocker = useCallback(() => {
     if (fsGraceTimerRef.current)    { clearTimeout(fsGraceTimerRef.current);    fsGraceTimerRef.current = null }
     if (fsGraceIntervalRef.current) { clearInterval(fsGraceIntervalRef.current); fsGraceIntervalRef.current = null }
+    if (fsRepeatViolRef.current)    { clearInterval(fsRepeatViolRef.current);    fsRepeatViolRef.current = null }
     setShowFsBlocker(false)
     showFsBlockerRef.current = false
     document.documentElement.requestFullscreen().catch(() => {})
@@ -514,6 +653,11 @@ export default function StudentExam() {
     if (!exam) return
     setEntryError('')
 
+    if (cameraRequired && !cameraGranted) {
+      setEntryError('Camera and microphone access is required. Please click "Enable Camera & Microphone" above.')
+      return
+    }
+
     if (!studentName.trim())  { setEntryError('Name is required.'); return }
     if (!studentEmail.trim()) { setEntryError('Email is required.'); return }
     if (!/\S+@\S+\.\S+/.test(studentEmail)) {
@@ -569,6 +713,9 @@ export default function StudentExam() {
       timerTargetRef.current = bufferEnd
       setTimeLeft(Math.max(1, Math.ceil((bufferEnd - now) / 1000)))
       setPhase('buffer')
+      if (exam.violation_limit > 0) {
+        document.documentElement.requestFullscreen().catch(() => {})
+      }
       return
     }
 
@@ -612,7 +759,11 @@ export default function StudentExam() {
     if (phase !== 'exam') return
 
     const onFullscreenChange = () => {
-      if (document.fullscreenElement) return
+      if (document.fullscreenElement) {
+        // Student returned to fullscreen — stop any repeating violation interval.
+        if (fsRepeatViolRef.current) { clearInterval(fsRepeatViolRef.current); fsRepeatViolRef.current = null }
+        return
+      }
       if (isDownloadingRef.current) {
         // Download dialog forced fullscreen exit — show a penalty-free re-entry prompt.
         setShowDownloadFsPrompt(true)
@@ -623,6 +774,7 @@ export default function StudentExam() {
       // exits fullscreen) without immediately counting it as a cheating attempt.
       if (fsGraceTimerRef.current)    clearTimeout(fsGraceTimerRef.current)
       if (fsGraceIntervalRef.current) clearInterval(fsGraceIntervalRef.current)
+      if (fsRepeatViolRef.current)    clearInterval(fsRepeatViolRef.current)
       setShowFsBlocker(true)
       showFsBlockerRef.current = true
       setFsGraceCountdown(5)
@@ -633,16 +785,37 @@ export default function StudentExam() {
         if (cd <= 0) { clearInterval(fsGraceIntervalRef.current!); fsGraceIntervalRef.current = null }
       }, 1000)
       fsGraceTimerRef.current = setTimeout(() => {
-        setShowFsBlocker(false)
-        showFsBlockerRef.current = false
         fsGraceTimerRef.current = null
         if (fsGraceIntervalRef.current) { clearInterval(fsGraceIntervalRef.current); fsGraceIntervalRef.current = null }
+        // Dismiss the blocker so triggerViolation's guard (showFsBlockerRef) allows it.
+        setShowFsBlocker(false)
+        showFsBlockerRef.current = false
+        // First violation after the 5 s grace period.
         triggerViolation('You exited fullscreen mode.')
+        // Then keep adding a violation every 2 s until the student returns
+        // or the exam auto-submits from hitting the violation limit.
+        fsRepeatViolRef.current = setInterval(() => {
+          triggerViolation('Still outside fullscreen.')
+        }, 2000)
       }, 5000)
     }
-    const onBlur       = () => triggerViolation()  // isDownloadingRef checked inside
+    // Both visibilitychange and blur are needed:
+    //  - visibilitychange fires when the tab becomes hidden (new tab, Alt+Tab)
+    //  - blur fires when the window loses focus (new window, Ctrl+N)
+    // A tab switch fires BOTH, so we deduplicate with a timestamp: if a
+    // violation was already recorded in the last 500 ms, skip the second one.
+    let lastViolationTs = 0
+    const deduplicatedViolation = (reason?: string) => {
+      const now = Date.now()
+      if (now - lastViolationTs < 500) return
+      lastViolationTs = now
+      triggerViolation(reason)
+    }
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') triggerViolation()
+      if (document.visibilityState === 'hidden') deduplicatedViolation('You switched to another tab.')
+    }
+    const onBlur = () => {
+      deduplicatedViolation('You opened another window or left the exam.')
     }
     // Block paste globally during exam; log as violation if proctoring is enabled.
     const onPaste = (e: ClipboardEvent) => {
@@ -650,24 +823,42 @@ export default function StudentExam() {
       triggerViolation('Paste action detected. This has been logged as a violation.')
     }
 
-    // Only register fullscreen/blur/visibility if violation tracking is enabled.
+    // Only register fullscreen/visibility/blur if violation tracking is enabled.
     if (examRef.current && examRef.current.violation_limit > 0) {
       document.addEventListener('fullscreenchange', onFullscreenChange)
-      window.addEventListener('blur', onBlur)
       document.addEventListener('visibilitychange', onVisibility)
+      window.addEventListener('blur', onBlur)
     }
     // Paste is always blocked regardless of violation_limit.
     window.addEventListener('paste', onPaste)
 
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange)
-      window.removeEventListener('blur', onBlur)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
       if (fsGraceTimerRef.current)    { clearTimeout(fsGraceTimerRef.current);    fsGraceTimerRef.current = null }
       if (fsGraceIntervalRef.current) { clearInterval(fsGraceIntervalRef.current); fsGraceIntervalRef.current = null }
+      if (fsRepeatViolRef.current)    { clearInterval(fsRepeatViolRef.current);    fsRepeatViolRef.current = null }
     }
   }, [phase, triggerViolation])
+
+  // ── Auto-recover fullscreen on any click ──────────────────────────────────
+  // During buffer and exam phases, if the student exits fullscreen (e.g. Esc)
+  // any click inside the page silently re-enters fullscreen. This works because
+  // requestFullscreen() requires a user gesture — a click satisfies that.
+  useEffect(() => {
+    if (!['buffer', 'exam'].includes(phase)) return
+    if (!examRef.current || examRef.current.violation_limit === 0) return
+
+    const onClick = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {})
+      }
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  }, [phase])
 
   // ── Countdown ─────────────────────────────────────────────────────────────
 
@@ -854,6 +1045,42 @@ export default function StudentExam() {
           )}
         </div>
 
+        {/* Online proctoring warning */}
+        {exam.camera_proctoring_required && (
+          <div style={{
+            marginBottom: 16,
+            padding: 14,
+            background: isDark ? '#422006' : '#fffbeb',
+            border: `1px solid ${isDark ? '#854d0e' : '#fde68a'}`,
+            borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#fbbf24' : '#92400e', marginBottom: 6 }}>
+              Online Proctored Exam
+            </div>
+            <ul style={{
+              margin: 0, paddingLeft: 18, fontSize: 12,
+              color: isDark ? '#fcd34d' : '#78350f', lineHeight: 1.7,
+            }}>
+              <li>Ensure you have a <strong>stable internet connection</strong> throughout the exam.</li>
+              <li>Sit in a <strong>quiet, well-lit environment</strong> with no background noise.</li>
+              <li>Your camera and microphone will be <strong>monitored live</strong> by the instructor.</li>
+              <li>If you disconnect, you have <strong>5 minutes</strong> to reconnect or your exam will be auto-submitted.</li>
+              <li>Offline backup submissions are <strong>not available</strong> for proctored exams.</li>
+            </ul>
+          </div>
+        )}
+
+        {/* Camera preview — shown when proctoring is required */}
+        {exam.camera_proctoring_required && (
+          <CameraPreview
+            onStatusChange={granted => setCameraGranted(granted)}
+            onDevicesSelected={(audioId, videoId) => {
+              setStudentAudioDeviceId(audioId)
+              setStudentVideoDeviceId(videoId)
+            }}
+          />
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Field label="Full Name" required>
             <input value={studentName} onChange={e => setStudentName(e.target.value)}
@@ -878,13 +1105,19 @@ export default function StudentExam() {
           </p>
         )}
 
-        <button onClick={beginExam} disabled={joining} style={{
+        <button onClick={beginExam} disabled={joining || (exam.camera_proctoring_required && !cameraGranted)} style={{
           marginTop: 20, width: '100%', padding: '12px 0',
-          background: joining ? '#60a5fa' : '#1a73e8', color: 'white',
+          background: joining ? '#60a5fa'
+            : (exam.camera_proctoring_required && !cameraGranted) ? '#9ca3af'
+            : '#1a73e8',
+          color: 'white',
           border: 'none', borderRadius: 7, fontSize: 15, fontWeight: 700,
-          cursor: joining ? 'not-allowed' : 'pointer', transition: 'background 0.2s',
+          cursor: (joining || (exam.camera_proctoring_required && !cameraGranted)) ? 'not-allowed' : 'pointer',
+          transition: 'background 0.2s',
         }}>
-          {joining ? 'Connecting…' : 'Begin Exam →'}
+          {joining ? 'Connecting…'
+            : (exam.camera_proctoring_required && !cameraGranted) ? 'Enable Camera to Continue'
+            : 'Begin Exam →'}
         </button>
       </div>
     </Center>
@@ -1220,17 +1453,19 @@ export default function StudentExam() {
                   {unansweredCount > 0 ? 'Submit Anyway' : 'Submit Exam'}
                 </button>
               </div>
-              <button
-                onClick={() => { setShowSubmitModal(false); handleDownloadBackup() }}
-                style={{
-                  marginTop: 12, width: '100%', padding: '9px 0',
-                  background: 'none', border: '1px solid #d1d5db',
-                  borderRadius: 7, fontSize: 13, fontWeight: 600,
-                  cursor: 'pointer', color: '#374151',
-                }}
-              >
-                ⬇ Download Offline Copy
-              </button>
+              {!cameraRequired && (
+                <button
+                  onClick={() => { setShowSubmitModal(false); handleDownloadBackup() }}
+                  style={{
+                    marginTop: 12, width: '100%', padding: '9px 0',
+                    background: 'none', border: '1px solid #d1d5db',
+                    borderRadius: 7, fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer', color: '#374151',
+                  }}
+                >
+                  ⬇ Download Offline Copy
+                </button>
+              )}
             </div>
           </Overlay>
         )
@@ -1580,7 +1815,7 @@ export default function StudentExam() {
                 <span style={{ color: '#dc2626', flexShrink: 0 }}>⚠</span>
                 <p style={{ margin: 0, fontSize: 13, color: '#dc2626', lineHeight: 1.5 }}>{submitError}</p>
               </div>
-              {showOfflineBtn && (
+              {showOfflineBtn && !cameraRequired && (
                 <button
                   onClick={handleDownloadBackup}
                   style={{
@@ -1614,6 +1849,100 @@ export default function StudentExam() {
           </p>
         </div>
       </div>
+
+      {/* ── Camera proctoring overlay (draggable video + chat toggle) ─── */}
+      {cameraRequired && studentLocalStream && (
+        <DraggableCamera
+          stream={studentLocalStream}
+          muted
+          onToggleAudio={handleStudentToggleAudio}
+          onToggleVideo={handleStudentToggleVideo}
+          audioEnabled={studentAudioOn}
+          videoEnabled={studentVideoOn}
+          onSwitchDevices={(audioId, videoId) => {
+            setStudentAudioDeviceId(audioId)
+            setStudentVideoDeviceId(videoId)
+            studentSwitchDevices(audioId, videoId)
+          }}
+        />
+      )}
+
+      {/* ── Disconnect warning overlay ──────────────────────────────── */}
+      {cameraRequired && disconnectCountdown !== null && phase === 'exam' && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0,
+          zIndex: 10000,
+          padding: '12px 20px',
+          background: '#dc2626',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          fontSize: 14,
+          fontWeight: 600,
+          boxShadow: '0 4px 20px rgba(220,38,38,0.4)',
+        }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+          </svg>
+          <span>
+            Connection lost — reconnecting automatically.
+            Your exam will be auto-submitted in{' '}
+            <strong>{Math.floor(disconnectCountdown / 60)}:{String(disconnectCountdown % 60).padStart(2, '0')}</strong>
+            {' '}if not reconnected.
+          </span>
+        </div>
+      )}
+
+      {/* ── Chat toggle button ────────────────────────────────────────── */}
+      {cameraRequired && studentWsConnected && (
+        <button
+          onClick={() => setShowStudentChat(prev => !prev)}
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            bottom: 20,
+            left: 20,
+            zIndex: 9998,
+            padding: '8px 16px',
+            background: showStudentChat ? '#1a73e8' : (isDark ? '#334155' : '#f3f4f6'),
+            color: showStudentChat ? '#fff' : (isDark ? '#f1f5f9' : '#374151'),
+            border: `1px solid ${isDark ? '#475569' : '#d1d5db'}`,
+            borderRadius: 20,
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+          }}
+        >
+          {showStudentChat ? 'Close Chat' : `Chat ${studentChatMessages.length > 0 ? `(${studentChatMessages.length})` : ''}`}
+        </button>
+      )}
+
+      {/* ── Student chat panel (floating) ─────────────────────────────── */}
+      {cameraRequired && showStudentChat && (
+        <div style={{
+          position: 'fixed',
+          bottom: 60,
+          left: 20,
+          zIndex: 9998,
+          height: 400,
+          borderRadius: 12,
+          overflow: 'hidden',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          border: `1px solid ${isDark ? '#334155' : '#e5e7eb'}`,
+        }}>
+          <ChatPanel
+            messages={studentChatMessages}
+            onSend={studentSendChat}
+            myId={studentMyId}
+            isDark={isDark}
+            compact
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1699,6 +2028,107 @@ function SubmitSpinner() {
       `}</style>
       <span className="exam-submit-spinner" />
     </>
+  )
+}
+
+function CameraPreview({ onStatusChange, onDevicesSelected }: {
+  onStatusChange: (granted: boolean) => void
+  onDevicesSelected?: (audioId: string, videoId: string) => void
+}) {
+  const [status, setStatus] = useState<'idle' | 'granted' | 'denied'>('idle')
+
+  const requestCamera = async () => {
+    try {
+      // Just check permission — DeviceSelector will handle the actual stream.
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      stream.getTracks().forEach(t => t.stop())
+      setStatus('granted')
+      onStatusChange(true)
+    } catch {
+      setStatus('denied')
+      onStatusChange(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginBottom: 20,
+      padding: 16,
+      background: 'var(--card-bg2)',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      textAlign: 'center',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
+        Camera & Microphone Setup
+      </div>
+      {status === 'idle' && (
+        <button
+          type="button"
+          onClick={requestCamera}
+          style={{
+            padding: '8px 20px',
+            background: '#1a73e8',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          Enable Camera & Microphone
+        </button>
+      )}
+      {status === 'denied' && (
+        <div>
+          <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc2626' }}>
+            Camera/microphone access denied. Please allow access in your browser settings and try again.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setStatus('idle'); onStatusChange(false) }}
+            style={{
+              padding: '6px 16px',
+              background: '#dc2626',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      )}
+      {status === 'granted' && (
+        <>
+          <DeviceSelector
+            compact
+            onDevicesSelected={(audioId, videoId) => {
+              onDevicesSelected?.(audioId, videoId)
+            }}
+          />
+          <div style={{
+            marginTop: 8,
+            background: '#dcfce7',
+            color: '#15803d',
+            padding: '4px 12px',
+            borderRadius: 10,
+            fontSize: 11,
+            fontWeight: 600,
+            display: 'inline-block',
+          }}>
+            Camera ready
+          </div>
+        </>
+      )}
+      <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+        Your camera and microphone will be active during the exam for live proctoring.
+      </p>
+    </div>
   )
 }
 

@@ -6,6 +6,10 @@ export default defineConfig({
   server: {
     // During local development, proxy /api to the Go backend
     proxy: {
+      '/api/ws': {
+        target: 'ws://localhost:8080',
+        ws: true,
+      },
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,

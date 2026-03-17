@@ -714,8 +714,8 @@ function EditQuestionModal({ question, onSaved, onCancel }: {
 
 // ── Question row in the teacher list ──────────────────────────────────────────
 
-function QuestionRow({ q, idx, onDelete, onEdit }: {
-  q: Question; idx: number; onDelete: () => void; onEdit: () => void
+function QuestionRow({ q, idx, onDelete, onEdit, locked }: {
+  q: Question; idx: number; onDelete: () => void; onEdit: () => void; locked?: boolean
 }) {
   const opts = q.options as unknown as string[] | null
   const correct = q.correct_answers ?? []
@@ -769,10 +769,12 @@ function QuestionRow({ q, idx, onDelete, onEdit }: {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-        <button onClick={onEdit} title="Edit question" style={{ ...btn(), padding: '4px 8px' }}>✎</button>
-        <button onClick={onDelete} style={btn('danger')}>×</button>
-      </div>
+      {!locked && (
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          <button onClick={onEdit} title="Edit question" style={{ ...btn(), padding: '4px 8px' }}>✎</button>
+          <button onClick={onDelete} style={btn('danger')}>×</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -927,6 +929,7 @@ export default function ExamView() {
   const [addingSetTo, setAddingSetTo] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'questions' | 'submissions' | 'analytics'>('questions')
   const [uploadStates, setUploadStates] = useState<Record<number, SetUploadState>>({})
+  const [collapsedSets, setCollapsedSets] = useState<Set<number>>(new Set())
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const [togglingStatus, setTogglingStatus] = useState(false)
   const [timeLeft, setTimeLeft] = useState<number | null>(null) // seconds remaining, null when inactive
@@ -1251,7 +1254,7 @@ export default function ExamView() {
       )}
 
       {/* ── Edit question modal ─────────────────────────────────────────── */}
-      {editingQuestion && (
+      {editingQuestion && !exam.is_active && (
         <EditQuestionModal
           question={editingQuestion}
           onSaved={handleSaveEditedQuestion}
@@ -1334,9 +1337,26 @@ export default function ExamView() {
           >
             {togglingStatus ? '…' : exam.is_active ? 'Stop Exam' : 'Start Exam'}
           </button>
-          <Link to={`/exams/${exam.id}/edit`}>
-            <button style={{ ...btn('outline') }}>Edit Settings</button>
-          </Link>
+          {!exam.is_active ? (
+            <Link to={`/exams/${exam.id}/edit`}>
+              <button style={{ ...btn('outline') }}>Edit Settings</button>
+            </Link>
+          ) : (
+            <button style={{ ...btn('outline'), opacity: 0.45, cursor: 'not-allowed' }} disabled title="Stop the exam to edit settings">
+              Edit Settings
+            </button>
+          )}
+          {exam.camera_proctoring_required && exam.is_active && (
+            <Link to={`/exams/${exam.id}/monitor`}>
+              <button style={{
+                ...btn('primary'),
+                background: '#7c3aed',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}>
+                Live Monitor
+              </button>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -1374,23 +1394,37 @@ export default function ExamView() {
           )}
 
           {/* Add Question Set */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-            <input
-              placeholder="Enter new question set title…"
-              value={newSetTitle}
-              onChange={e => setNewSetTitle(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddSet()}
-              disabled={atSetLimit}
-              style={{ ...inputStyle, flex: 1, opacity: atSetLimit ? 0.5 : 1 }}
-            />
-            <button
-              onClick={handleAddSet}
-              disabled={atSetLimit || !newSetTitle.trim()}
-              style={btn(atSetLimit ? 'ghost' : 'primary')}
-            >
-              + Add Set
-            </button>
-          </div>
+          {exam.is_active && (
+            <div style={{
+              marginBottom: 16, padding: '10px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+              background: isDark ? '#422006' : '#fffbeb',
+              border: `1px solid ${isDark ? '#854d0e' : '#fde68a'}`,
+              color: isDark ? '#fbbf24' : '#92400e',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: 16 }}>🔒</span>
+              Editing is locked while the exam is active. Stop the exam to make changes.
+            </div>
+          )}
+          {!exam.is_active && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+              <input
+                placeholder="Enter new question set title…"
+                value={newSetTitle}
+                onChange={e => setNewSetTitle(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAddSet()}
+                disabled={atSetLimit}
+                style={{ ...inputStyle, flex: 1, opacity: atSetLimit ? 0.5 : 1 }}
+              />
+              <button
+                onClick={handleAddSet}
+                disabled={atSetLimit || !newSetTitle.trim()}
+                style={btn(atSetLimit ? 'ghost' : 'primary')}
+              >
+                + Add Set
+              </button>
+            </div>
+          )}
           {atSetLimit && (
             <p style={{ color: '#92400e', background: '#fef3c7', padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 16 }}>
               Maximum of 5 question sets reached.
@@ -1401,48 +1435,94 @@ export default function ExamView() {
             <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No question sets yet. Add one above.</p>
           )}
 
-          {exam.question_sets?.map(qs => (
+          {(exam.question_sets ?? []).length > 1 && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <button
+                onClick={() => {
+                  const allIds = exam.question_sets?.map(qs => qs.id) ?? []
+                  const allCollapsed = allIds.every(id => collapsedSets.has(id))
+                  setCollapsedSets(allCollapsed ? new Set() : new Set(allIds))
+                }}
+                style={{ ...btn(), fontSize: 12, padding: '4px 10px' }}
+              >
+                {(exam.question_sets?.every(qs => collapsedSets.has(qs.id))) ? 'Expand All' : 'Collapse All'}
+              </button>
+            </div>
+          )}
+
+          {exam.question_sets?.map(qs => {
+            const isCollapsed = collapsedSets.has(qs.id)
+            const qCount = qs.questions?.length ?? 0
+            const setTotal = (qs.questions ?? []).reduce((sum, q) => sum + q.points, 0)
+            const toggleCollapse = () => setCollapsedSets(prev => {
+              const next = new Set(prev)
+              if (next.has(qs.id)) next.delete(qs.id); else next.add(qs.id)
+              return next
+            })
+
+            return (
             <div key={qs.id} style={{ ...card, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div>
+              {/* Set header — always visible */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isCollapsed ? 0 : 12 }}>
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}
+                  onClick={toggleCollapse}
+                >
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 20, height: 20, fontSize: 12, color: 'var(--text-muted)',
+                    transition: 'transform 0.15s',
+                    transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                  }}>
+                    ▼
+                  </span>
                   <strong style={{ fontSize: 15, color: isDark ? '#f1f5f9' : '#111827' }}>{qs.title}</strong>
-                  <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-                    {qs.questions?.length ?? 0} question{(qs.questions?.length ?? 0) !== 1 ? 's' : ''}
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {qCount} question{qCount !== 1 ? 's' : ''}
+                    {qCount > 0 && <> &middot; {setTotal} marks</>}
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => setAddingSetTo(addingSetTo === qs.id ? null : qs.id)}
-                    style={btn('primary')}
-                  >
-                    {addingSetTo === qs.id ? 'Cancel' : '+ Question'}
-                  </button>
-                  <button
-                    onClick={() => fileInputRefs.current[qs.id]?.click()}
-                    disabled={uploadStates[qs.id]?.loading}
-                    style={btn('outline')}
-                    title="Upload questions from a CSV file"
-                  >
-                    {uploadStates[qs.id]?.loading ? 'Uploading…' : '↑ Upload CSV'}
-                  </button>
-                  <button onClick={downloadTemplate} style={btn()} title="Download a filled example CSV">
-                    ↓ Template
-                  </button>
-                  <button
-                    onClick={() => exportSetAsCSV(qs)}
-                    disabled={(qs.questions?.length ?? 0) === 0}
-                    style={{
-                      padding: '5px 12px', borderRadius: 5, fontSize: 13, fontWeight: 500,
-                      cursor: (qs.questions?.length ?? 0) === 0 ? 'not-allowed' : 'pointer',
-                      border: '1px solid var(--border)',
-                      background: 'var(--card-bg)',
-                      color: 'var(--text)',
-                      opacity: (qs.questions?.length ?? 0) === 0 ? 0.45 : 1,
-                    }}
-                    title="Download questions in this set as CSV"
-                  >
-                    ↓ Export CSV
-                  </button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
+                  {!isCollapsed && !exam.is_active && (
+                    <>
+                      <button
+                        onClick={() => setAddingSetTo(addingSetTo === qs.id ? null : qs.id)}
+                        style={btn('primary')}
+                      >
+                        {addingSetTo === qs.id ? 'Cancel' : '+ Question'}
+                      </button>
+                      <button
+                        onClick={() => fileInputRefs.current[qs.id]?.click()}
+                        disabled={uploadStates[qs.id]?.loading}
+                        style={btn('outline')}
+                        title="Upload questions from a CSV file"
+                      >
+                        {uploadStates[qs.id]?.loading ? 'Uploading…' : '↑ Upload CSV'}
+                      </button>
+                    </>
+                  )}
+                  {!isCollapsed && (
+                    <>
+                      <button onClick={downloadTemplate} style={btn()} title="Download a filled example CSV">
+                        ↓ Template
+                      </button>
+                      <button
+                        onClick={() => exportSetAsCSV(qs)}
+                        disabled={qCount === 0}
+                        style={{
+                          padding: '5px 12px', borderRadius: 5, fontSize: 13, fontWeight: 500,
+                          cursor: qCount === 0 ? 'not-allowed' : 'pointer',
+                          border: '1px solid var(--border)',
+                          background: 'var(--card-bg)',
+                          color: 'var(--text)',
+                          opacity: qCount === 0 ? 0.45 : 1,
+                        }}
+                        title="Download questions in this set as CSV"
+                      >
+                        ↓ Export CSV
+                      </button>
+                    </>
+                  )}
                   {/* Hidden file input */}
                   <input
                     type="file"
@@ -1455,101 +1535,111 @@ export default function ExamView() {
                       e.target.value = ''
                     }}
                   />
-                  <button
-                    onClick={() => openDuplicateModal(qs.id)}
-                    disabled={atSetLimit}
-                    style={{ ...btn('outline'), opacity: atSetLimit ? 0.5 : 1 }}
-                    title={atSetLimit ? 'Maximum 5 sets reached' : 'Duplicate this set with all its questions'}
-                  >
-                    ⊕ Duplicate
-                  </button>
-                  <button onClick={() => handleDeleteSet(qs.id)} style={btn('danger')}>Delete Set</button>
+                  {!isCollapsed && !exam.is_active && (
+                    <>
+                      <button
+                        onClick={() => openDuplicateModal(qs.id)}
+                        disabled={atSetLimit}
+                        style={{ ...btn('outline'), opacity: atSetLimit ? 0.5 : 1 }}
+                        title={atSetLimit ? 'Maximum 5 sets reached' : 'Duplicate this set with all its questions'}
+                      >
+                        ⊕ Duplicate
+                      </button>
+                      <button onClick={() => handleDeleteSet(qs.id)} style={btn('danger')}>Delete Set</button>
+                    </>
+                  )}
                 </div>
               </div>
 
-              {(qs.questions ?? []).length === 0 && addingSetTo !== qs.id && (
-                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '4px 0 8px' }}>No questions yet.</p>
-              )}
+              {/* Collapsible content */}
+              {!isCollapsed && (
+                <>
+                  {qCount === 0 && addingSetTo !== qs.id && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '4px 0 8px' }}>No questions yet.</p>
+                  )}
 
-              {qs.questions?.map((q, idx) => (
-                <QuestionRow
-                  key={q.id}
-                  q={q}
-                  idx={idx}
-                  onDelete={() => handleDeleteQuestion(q.id)}
-                  onEdit={() => setEditingQuestion(q)}
-                />
-              ))}
+                  {qs.questions?.map((q, idx) => (
+                    <QuestionRow
+                      key={q.id}
+                      q={q}
+                      idx={idx}
+                      onDelete={() => handleDeleteQuestion(q.id)}
+                      onEdit={() => setEditingQuestion(q)}
+                      locked={exam.is_active}
+                    />
+                  ))}
 
-              {/* Live marks counter */}
-              {(qs.questions ?? []).length > 0 && (() => {
-                const setTotal = (qs.questions ?? []).reduce((sum, q) => sum + q.points, 0)
-                const isNotFirst = sortedSets[0]?.id !== qs.id
-                const mismatch = isNotFirst && masterFullMarks > 0 && setTotal !== masterFullMarks
-                return (
-                  <div style={{
-                    marginTop: 8, padding: '6px 12px', borderRadius: 6, fontSize: 12,
-                    background: mismatch ? '#fef3c7' : 'var(--card-bg2)',
-                    border: `1px solid ${mismatch ? '#fde68a' : 'var(--border)'}`,
-                    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-                  }}>
-                    <span style={{ color: 'var(--text)' }}>
-                      Set Total: <strong>{setTotal}</strong>
-                      {masterFullMarks > 0 && <span style={{ color: 'var(--text-muted)' }}> / {masterFullMarks} marks</span>}
-                    </span>
-                    {mismatch && (
-                      <span style={{ color: '#dc2626', fontWeight: 600 }}>
-                        ⚠ Set total ({setTotal}) does not match the required Full Marks ({masterFullMarks}).
-                      </span>
-                    )}
-                  </div>
-                )
-              })()}
-
-              {/* CSV upload feedback */}
-              {uploadStates[qs.id] && !uploadStates[qs.id].loading && (() => {
-                const st = uploadStates[qs.id]
-                if (st.error) return (
-                  <div style={{ margin: '8px 0', padding: '10px 12px', background: '#fee2e2', borderRadius: 6, fontSize: 13, color: '#dc2626' }}>
-                    ⚠ {st.error}
-                  </div>
-                )
-                const res = st.result
-                if (!res) return null
-                return (
-                  <div style={{ margin: '8px 0', padding: '10px 12px', background: res.inserted > 0 ? '#dcfce7' : '#fef3c7', borderRadius: 6, fontSize: 13 }}>
-                    {res.inserted > 0 && (
-                      <p style={{ margin: '0 0 4px', color: '#15803d', fontWeight: 600 }}>
-                        ✓ {res.inserted} question{res.inserted !== 1 ? 's' : ''} imported successfully.
-                      </p>
-                    )}
-                    {res.errors && res.errors.length > 0 && (
-                      <div>
-                        <p style={{ margin: '0 0 6px', color: '#92400e', fontWeight: 600 }}>
-                          Upload rejected — fix {res.errors.length} error{res.errors.length !== 1 ? 's' : ''} and re-upload:
-                        </p>
-                        <ul style={{ margin: 0, paddingLeft: 18 }}>
-                          {res.errors.map((e, i) => (
-                            <li key={i} style={{ color: '#78350f', marginBottom: 2 }}>
-                              Row {e.row}: {e.message}
-                            </li>
-                          ))}
-                        </ul>
+                  {/* Live marks counter */}
+                  {qCount > 0 && (() => {
+                    const isNotFirst = sortedSets[0]?.id !== qs.id
+                    const mismatch = isNotFirst && masterFullMarks > 0 && setTotal !== masterFullMarks
+                    return (
+                      <div style={{
+                        marginTop: 8, padding: '6px 12px', borderRadius: 6, fontSize: 12,
+                        background: mismatch ? '#fef3c7' : 'var(--card-bg2)',
+                        border: `1px solid ${mismatch ? '#fde68a' : 'var(--border)'}`,
+                        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                      }}>
+                        <span style={{ color: 'var(--text)' }}>
+                          Set Total: <strong>{setTotal}</strong>
+                          {masterFullMarks > 0 && <span style={{ color: 'var(--text-muted)' }}> / {masterFullMarks} marks</span>}
+                        </span>
+                        {mismatch && (
+                          <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                            ⚠ Set total ({setTotal}) does not match the required Full Marks ({masterFullMarks}).
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )
-              })()}
+                    )
+                  })()}
 
-              {addingSetTo === qs.id && (
-                <AddQuestionForm
-                  questionSetId={qs.id}
-                  onAdded={() => { setAddingSetTo(null); reload() }}
-                  onCancel={() => setAddingSetTo(null)}
-                />
+                  {/* CSV upload feedback */}
+                  {uploadStates[qs.id] && !uploadStates[qs.id].loading && (() => {
+                    const st = uploadStates[qs.id]
+                    if (st.error) return (
+                      <div style={{ margin: '8px 0', padding: '10px 12px', background: '#fee2e2', borderRadius: 6, fontSize: 13, color: '#dc2626' }}>
+                        ⚠ {st.error}
+                      </div>
+                    )
+                    const res = st.result
+                    if (!res) return null
+                    return (
+                      <div style={{ margin: '8px 0', padding: '10px 12px', background: res.inserted > 0 ? '#dcfce7' : '#fef3c7', borderRadius: 6, fontSize: 13 }}>
+                        {res.inserted > 0 && (
+                          <p style={{ margin: '0 0 4px', color: '#15803d', fontWeight: 600 }}>
+                            ✓ {res.inserted} question{res.inserted !== 1 ? 's' : ''} imported successfully.
+                          </p>
+                        )}
+                        {res.errors && res.errors.length > 0 && (
+                          <div>
+                            <p style={{ margin: '0 0 6px', color: '#92400e', fontWeight: 600 }}>
+                              Upload rejected — fix {res.errors.length} error{res.errors.length !== 1 ? 's' : ''} and re-upload:
+                            </p>
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {res.errors.map((e, i) => (
+                                <li key={i} style={{ color: '#78350f', marginBottom: 2 }}>
+                                  Row {e.row}: {e.message}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
+                  {addingSetTo === qs.id && !exam.is_active && (
+                    <AddQuestionForm
+                      questionSetId={qs.id}
+                      onAdded={() => { setAddingSetTo(null); reload() }}
+                      onCancel={() => setAddingSetTo(null)}
+                    />
+                  )}
+                </>
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

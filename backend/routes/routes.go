@@ -9,6 +9,10 @@ import (
 func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	api := app.Group("/api")
 
+	// ── WebSocket — signaling + chat for video proctoring rooms ──────────────
+	api.Use("/ws", handlers.WebSocketUpgrade())
+	api.Get("/ws", h.HandleWebSocket(h.RoomHub))
+
 	// ── Public routes ────────────────────────────────────────────────────────
 	auth := api.Group("/auth")
 	// Register is disabled — accounts are provisioned by a superadmin.
