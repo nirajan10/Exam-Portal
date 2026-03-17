@@ -1,20 +1,24 @@
 # Exam Portal
 
-A secure online exam platform where teachers create and manage exams with MCQ, code execution, and theory questions. Students join anonymously; coding answers run inside isolated Docker sandboxes. Graded reports are emailed to students as PDF attachments.
+A secure online exam platform where teachers create and manage exams with MCQ, MRQ, code execution, and theory questions. Students join anonymously via PIN — no account required. Code answers run inside isolated Docker sandboxes. Teachers grade submissions and send PDF reports via their own Gmail SMTP credentials. Live video proctoring with fullscreen lockdown and violation tracking keeps exams secure.
 
 ## Features
 
-- **Multiple question types** — MCQ, MRQ (multi-select), code execution, and free-text theory
-- **Isolated code execution** — student code runs in ephemeral Docker containers with no network, limited memory, and a PID cap
+- **Multiple question types** — MCQ, MRQ (multi-select), code execution (C, C++, Python), and free-text theory
+- **Isolated code execution** — student code runs in ephemeral Docker containers with no network, 64 MB memory limit, 50 PID cap, and read-only root filesystem
+- **Live video proctoring** — WebRTC star topology (students stream to teacher only); teacher monitors all feeds from a dedicated exam monitor page
+- **Fullscreen lockdown** — enforced from buffer phase through exam end; auto-recovery on click; 5-second grace period on exit, then escalating violations every 2 seconds until rejoin or auto-submit
+- **Violation tracking** — tab switches, new windows, fullscreen exits, and paste events are tracked; configurable violation limit triggers auto-submission
 - **Role-based access** — superadmin, teacher, and anonymous student tiers
-- **Live proctoring** — optional webcam feed, fullscreen enforcement, and violation limits
-- **Question sets** — randomized sets so each student receives a different variant of the exam
+- **Question sets** — randomized sets so each student receives a different variant; deterministic assignment ensures same student always gets the same set on rejoin
 - **Analytics & grading** — per-question score distributions, manual grading for theory/code answers, bulk ZIP export of PDF reports
-- **Email reports** — teachers send graded PDF reports directly to students via their own Gmail SMTP credentials (BYOM)
+- **Email reports** — teachers send graded PDF reports to students via their own Gmail SMTP credentials (BYOM); rich browser-generated PDFs or backend fallback
 - **Bulk import** — CSV upload for creating questions in bulk
-- **Offline submission backup** — students can download an encrypted backup of their answers; teachers can reimport it if connectivity is lost
+- **Offline submission backup** — students download an encrypted backup of their answers; teachers reimport via SHA-256 tamper-checked upload
 - **PIN-protected exams** — optional access code required to join
-- **Teacher profiles** — profile picture upload, display name
+- **Teacher feedback** — teachers submit bug reports, suggestions, usability, performance, or general feedback; admins review and manage from a dedicated panel
+- **Dark mode** — system-wide theme toggle via CSS custom properties
+- **Force password change** — admin-created teacher accounts require password change on first login
 
 ## Tech Stack
 
@@ -23,9 +27,10 @@ A secure online exam platform where teachers create and manage exams with MCQ, c
 | Backend | Go 1.25, Fiber v2.52, GORM v1.25, PostgreSQL 16 |
 | Auth | golang-jwt/jwt v5, bcrypt cost 12 |
 | Code execution | Docker SDK v26, ephemeral sibling containers |
-| PDF (backend) | go-pdf/fpdf v0.9 |
+| Video proctoring | Native WebRTC + WebSocket signaling (star topology) |
+| PDF (backend) | go-pdf/fpdf v0.9 (fallback reports) |
 | Frontend | React 18, TypeScript 5.4, Vite 5.3, Axios 1.7 |
-| PDF (frontend) | jsPDF 2.5, jsPDF-autotable 3.8, JSZip 3.10 |
+| PDF (frontend) | jsPDF 2.5 + jsPDF-autotable 3.8, JSZip 3.10 |
 | Serving | Nginx 1.25-alpine (SPA + reverse proxy) |
 | Orchestration | Docker Compose |
 
@@ -70,31 +75,77 @@ On first startup the database schema is created automatically. If `ADMIN_EMAIL` 
 backend/
   config/         env var loading (DATABASE_URL, JWT_SECRET, PORT)
   crypto/         AES-256-GCM helpers for encrypting credentials at rest
-  database/       GORM init + AutoMigrate
+  database/       GORM init + AutoMigrate (FK order matters)
   handlers/       one file per resource; all share a *Handler receiver
+    room.go       WebRTC room/participant management
+    webrtc.go     WebSocket upgrade middleware for signaling
+    mail.go       SMTP settings + report sending + backend PDF fallback
+    feedback.go   teacher feedback CRUD
   middleware/     JWT validation + role extraction
   models/         GORM structs — source of truth for DB schema
-  routes/         public vs. JWT-protected route split
+    feedback.go   feedback types: bug, suggestion, usability, performance, other
+  routes/         public / JWT-protected / admin route groups
   runner/         Docker sandbox manager (security-sensitive)
   seed/           superadmin bootstrap on startup
   uploads/        profile picture files (served at /uploads)
 
 frontend/src/
-  api/client.ts   single Axios instance + all TypeScript interfaces + API helpers
-  pages/          route-level components (one per page)
-  components/     shared UI — Navbar, ProtectedRoute, TeacherLayout, ProfileModal
-  contexts/       ThemeContext (light/dark mode)
-  utils/          generateStudentPDF.ts — rich PDF for download and email attachment
+  api/client.ts         single Axios instance + all TypeScript interfaces + API helpers
+  pages/
+    Dashboard.tsx       teacher exam list
+    ExamCreate.tsx      new exam form
+    ExamEdit.tsx        edit existing exam
+    ExamView.tsx        exam detail — questions, submissions, analytics tabs
+    ExamMonitor.tsx     live WebRTC video monitoring during exam
+    GradingView.tsx     grade individual submissions
+    StudentExam.tsx     student exam session — fullscreen lockdown, violation tracking, proctoring
+    ExamLobby.tsx       student browse active exams
+    AdminStaff.tsx      superadmin teacher management
+    AdminFeedback.tsx   superadmin feedback review panel
+  components/
+    Navbar.tsx          sticky navigation bar with profile menu
+    ProtectedRoute.tsx  JWT auth gate + force-password-change redirect
+    TeacherLayout.tsx   layout wrapper with floating feedback button
+    DraggableCamera.tsx floating student camera preview with device controls
+    FeedbackModal.tsx   teacher feedback submission form
+  contexts/
+    ThemeContext.tsx     light/dark mode via CSS vars + data-theme attribute
+  hooks/
+    useWebRTC.ts        WebRTC peer connections, WebSocket signaling, track management
+  utils/
+    generateStudentPDF.ts  rich PDF for download and email attachment
 ```
 
 ## API Overview
 
-| Visibility | Routes |
-|-----------|--------|
-| Public | `POST /api/auth/login` |
-| Public (student) | `GET /api/exams/active`, `POST /api/exams/:id/verify-pin`, `POST /api/exams/:id/join`, `POST /api/exams/:id/submit`, `GET /api/exams/:id/public`, `POST /api/exams/:id/execute` |
-| JWT (teacher) | `/api/exams` CRUD, `/api/question-sets` CRUD, `/api/questions` CRUD, `/api/submissions` (read/grade/delete), `/api/exams/:id/analytics`, `/api/exams/:id/upload-questions`, `/api/submissions/import`, `/api/reports/send/:id`, `/api/reports/send-all`, `/api/execute`, `/api/me`, `/api/me/mail-settings` |
-| JWT (superadmin) | `/api/admin/teachers` CRUD + reset-password + activate/deactivate |
+Full route list in `routes/routes.go`. Three auth levels:
+
+| Group | Routes |
+|-------|--------|
+| Public | `POST /api/auth/login`, `GET /api/exams/active`, `POST /api/exams/:id/verify-pin`, `POST /api/exams/:id/join`, `POST /api/exams/:id/submit`, `GET /api/exams/:id/public`, `POST /api/exams/:id/execute` |
+| JWT (teacher) | `/api/exams` CRUD, `/api/question-sets` CRUD, `/api/questions` CRUD, `/api/submissions` read/grade/delete/import, `/api/exams/:id/analytics`, `/api/exams/:id/upload-questions`, `/api/reports/send/:id`, `/api/reports/send-all`, `/api/execute`, `/api/me`, `/api/me/profile-pic`, `/api/me/mail-settings`, `/api/feedback` |
+| JWT (superadmin) | `/api/admin/teachers` CRUD + reset-password + activate/deactivate, `/api/admin/feedback` list + delete, `/api/admin/teachers/:id/exams` |
+| WebSocket | `/api/ws` — WebRTC signaling + chat for video proctoring rooms |
+
+Student submissions (`POST /api/exams/:id/submit`) require no auth — name + email in body.
+
+## Frontend Routes
+
+| Path | Page | Access |
+|------|------|--------|
+| `/` | Landing page | Public |
+| `/exams` | Exam lobby (student) | Public |
+| `/take/:id` | Student exam session | Public (PIN-verified) |
+| `/login` | Teacher login | Public |
+| `/dashboard` | Teacher dashboard | JWT |
+| `/exams/new` | Create exam | JWT |
+| `/exams/:id` | Exam detail (questions/submissions/analytics) | JWT |
+| `/exams/:id/edit` | Edit exam | JWT |
+| `/exams/:id/monitor` | Live video proctoring monitor | JWT |
+| `/exams/:examId/grade/:submissionId` | Grade submission | JWT |
+| `/force-password-change` | First-login password change | JWT |
+| `/admin/manage-staff` | Teacher management | Superadmin |
+| `/admin/feedback` | Feedback review | Superadmin |
 
 ## Environment Variables
 
@@ -123,6 +174,13 @@ npm install
 npm run dev
 ```
 
+**Type-check frontend:**
+
+```bash
+cd frontend
+npx tsc --noEmit
+```
+
 **Rebuild a single service:**
 
 ```bash
@@ -132,9 +190,17 @@ docker compose build frontend
 
 ## Security Notes
 
-- Code execution containers run with `NetworkMode: none`, 64 MB memory limit, 50 PID limit, and a read-only root filesystem
-- Correct answers are never exposed in public/student-facing API responses
-- Ownership is verified via SQL joins before every mutating operation — failures return 404 to avoid leaking resource existence
-- SMTP app passwords are encrypted with AES-256-GCM before storage; the key is derived from `JWT_SECRET`
+- Code execution containers: `NetworkMode: none`, 64 MB memory, 50 PID limit, read-only rootfs, `no-new-privileges`, code delivered via stdin (not env vars)
+- Correct answers never exposed in public/student-facing API responses
+- Ownership verified via SQL joins before every mutating operation — failures return 404 to avoid leaking resource existence
+- SMTP app passwords encrypted with AES-256-GCM before storage; key derived from `JWT_SECRET`
 - Offline submission backups are SHA-256 tamper-checked before import
 - Nginx enforces `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and a strict Content Security Policy
+- WebRTC star topology prevents student-to-student connections; signaling via WebSocket
+
+## Documentation
+
+| Topic | File |
+|-------|------|
+| Architectural patterns & conventions | `.claude/docs/architectural_patterns.md` |
+| Comprehensive project documentation | `docs/PROJECT_DOCUMENTATION.md` |
