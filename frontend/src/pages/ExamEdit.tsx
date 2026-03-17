@@ -244,7 +244,10 @@ export default function ExamEdit() {
   useEffect(() => {
     if (!id) return
     getExam(Number(id))
-      .then(exam => { applyExam(exam); setLoading(false) })
+      .then(exam => {
+        if (exam.is_active) { navigate(`/exams/${id}`, { replace: true }); return }
+        applyExam(exam); setLoading(false)
+      })
       .catch(() => navigate('/dashboard'))
   }, [id])
 

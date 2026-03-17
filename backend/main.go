@@ -50,8 +50,8 @@ func main() {
 		// In production this is handled by Nginx (same origin). In development
 		// the frontend dev server runs on a different port, so CORS is needed.
 		AllowOrigins:     "http://localhost,http://localhost:5173,http://localhost:3000",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, Upgrade, Connection",
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowCredentials: true,
 	}))
 
