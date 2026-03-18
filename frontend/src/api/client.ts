@@ -303,6 +303,28 @@ export const gradeSubmission = (
 ): Promise<Submission> =>
   api.patch<Submission>(`/submissions/${id}/grade`, { grades }).then(r => r.data)
 
+// ── LLM auto-grading ──────────────────────────────────────────────────────
+
+export interface AutoGradeResult {
+  submission: Submission
+  graded: number
+}
+
+export interface AutoGradeAllResult {
+  submissions_processed: number
+  answers_graded: number
+  message: string
+}
+
+export const getLLMHealth = (): Promise<{ status: string }> =>
+  api.get<{ status: string }>('/llm/health').then(r => r.data)
+
+export const autoGradeSubmission = (submissionId: number): Promise<AutoGradeResult> =>
+  api.post<AutoGradeResult>(`/submissions/${submissionId}/auto-grade`, {}, { timeout: 120_000 }).then(r => r.data)
+
+export const autoGradeAllSubmissions = (examId: number): Promise<AutoGradeAllResult> =>
+  api.post<AutoGradeAllResult>(`/exams/${examId}/auto-grade-all`, {}, { timeout: 600_000 }).then(r => r.data)
+
 // ── Code execution ────────────────────────────────────────────────────────────
 
 export interface RunResult {

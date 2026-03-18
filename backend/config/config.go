@@ -14,6 +14,8 @@ type Config struct {
 	// Superadmin bootstrap — both must be set for auto-creation to run.
 	AdminEmail    string
 	AdminPassword string
+	// Local LLM grading service URL.
+	LLMServiceURL string
 }
 
 func Load() *Config {
@@ -26,6 +28,7 @@ func Load() *Config {
 		Port:          getOrDefault("PORT", "8080"),
 		AdminEmail:    os.Getenv("ADMIN_EMAIL"),
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		LLMServiceURL: getOrDefault("LLM_SERVICE_URL", "http://localhost:8000"),
 	}
 	return cfg
 }

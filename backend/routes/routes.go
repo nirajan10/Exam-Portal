@@ -87,6 +87,11 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Get("/exams/:id/export-submissions", h.ExportAllSubmissions)
 	protected.Post("/exams/:id/import-submissions", h.ImportAllSubmissions)
 
+	// LLM auto-grading
+	protected.Get("/llm/health", h.GetLLMHealth)
+	protected.Post("/submissions/:id/auto-grade", h.AutoGradeSubmission)
+	protected.Post("/exams/:id/auto-grade-all", h.AutoGradeAllSubmissions)
+
 	// Code execution sandbox
 	protected.Post("/execute", h.Execute)
 

@@ -4,7 +4,7 @@ import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
   getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
-  exportAllSubmissions, importAllSubmissions,
+  exportAllSubmissions, importAllSubmissions, autoGradeAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
@@ -960,6 +960,9 @@ export default function ExamView() {
   const [exporting, setExporting] = useState(false)
   const [bulkImporting, setBulkImporting] = useState(false)
 
+  // AI auto-grade state
+  const [aiGradingAll, setAiGradingAll] = useState(false)
+
   // Mail / report state
   const [mailConfigured, setMailConfigured] = useState(false)
   const [sendingReports, setSendingReports] = useState<Set<number>>(new Set())
@@ -1741,6 +1744,36 @@ export default function ExamView() {
               }}
             >
               {bulkSending ? '⏳ Sending…' : '📨 Release All Graded Reports'}
+            </button>
+
+            {/* AI Grade All Pending */}
+            <button
+              onClick={async () => {
+                if (!id) return
+                setAiGradingAll(true)
+                try {
+                  const result = await autoGradeAllSubmissions(Number(id))
+                  setToast({ message: result.message, type: 'success' })
+                  const fresh = await getSubmissions(Number(id))
+                  setSubmissions(fresh)
+                } catch {
+                  setToast({ message: 'AI grading failed. Is the LLM service running?', type: 'error' })
+                } finally {
+                  setAiGradingAll(false)
+                }
+              }}
+              disabled={aiGradingAll || submissions.length === 0}
+              title="Use local AI to auto-grade all pending theory and code answers"
+              style={{
+                padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                background: aiGradingAll || submissions.length === 0 ? '#e5e7eb' : '#7c3aed',
+                color: aiGradingAll || submissions.length === 0 ? '#9ca3af' : 'white',
+                border: 'none', borderRadius: 7,
+                cursor: aiGradingAll || submissions.length === 0 ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {aiGradingAll ? '⏳ AI Grading…' : '🤖 AI Grade All'}
             </button>
 
             {/* Download All Submissions */}
