@@ -331,6 +331,16 @@ export const importOfflineSubmission = (examId: number, base64Data: string): Pro
 export const importOfflineAuto = (base64Data: string): Promise<Submission> =>
   api.post<Submission>('/submissions/import', { data: base64Data }).then(r => r.data)
 
+// ── Bulk submission export / import ────────────────────────────────────────────
+
+/** Export all submissions (with answers) for an exam as a JSON blob. */
+export const exportAllSubmissions = (examId: number): Promise<Blob> =>
+  api.get(`/exams/${examId}/export-submissions`, { responseType: 'blob' }).then(r => r.data)
+
+/** Import a previously-exported bulk submissions file. */
+export const importAllSubmissions = (examId: number, data: unknown): Promise<{ imported: number; skipped: number; message: string }> =>
+  api.post(`/exams/${examId}/import-submissions`, data).then(r => r.data)
+
 // ── CSV bulk upload ───────────────────────────────────────────────────────────
 
 export interface UploadResult {

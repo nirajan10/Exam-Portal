@@ -760,8 +760,12 @@ export default function StudentExam() {
 
     const onFullscreenChange = () => {
       if (document.fullscreenElement) {
-        // Student returned to fullscreen — stop any repeating violation interval.
-        if (fsRepeatViolRef.current) { clearInterval(fsRepeatViolRef.current); fsRepeatViolRef.current = null }
+        // Student returned to fullscreen — clear all violation timers and hide blocker.
+        if (fsGraceTimerRef.current)    { clearTimeout(fsGraceTimerRef.current);    fsGraceTimerRef.current = null }
+        if (fsGraceIntervalRef.current) { clearInterval(fsGraceIntervalRef.current); fsGraceIntervalRef.current = null }
+        if (fsRepeatViolRef.current)    { clearInterval(fsRepeatViolRef.current);    fsRepeatViolRef.current = null }
+        setShowFsBlocker(false)
+        showFsBlockerRef.current = false
         return
       }
       if (isDownloadingRef.current) {
@@ -1089,6 +1093,9 @@ export default function StudentExam() {
           <Field label="Email Address" required>
             <input type="email" value={studentEmail} onChange={e => setStudentEmail(e.target.value)}
               placeholder="e.g. jane@university.edu" style={fieldInput} disabled={joining} />
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280', lineHeight: 1.4 }}>
+              Use a valid email — your results will be sent to this address.
+            </p>
           </Field>
         </div>
 

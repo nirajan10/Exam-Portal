@@ -4,6 +4,7 @@ import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
   getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
+  exportAllSubmissions, importAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
@@ -926,6 +927,8 @@ export default function ExamView() {
   const { isDark } = useTheme()
   const [exam, setExam] = useState<Exam | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [subPage, setSubPage] = useState(1)
+  const SUB_PER_PAGE = 10
   const [newSetTitle, setNewSetTitle] = useState('')
   const [addingSetTo, setAddingSetTo] = useState<number | null>(null)
   const initialTab = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
@@ -951,6 +954,11 @@ export default function ExamView() {
   // Offline import state
   const offlineInputRef = useRef<HTMLInputElement>(null)
   const [importingOffline, setImportingOffline] = useState(false)
+
+  // Bulk export / import state
+  const bulkInputRef = useRef<HTMLInputElement>(null)
+  const [exporting, setExporting] = useState(false)
+  const [bulkImporting, setBulkImporting] = useState(false)
 
   // Mail / report state
   const [mailConfigured, setMailConfigured] = useState(false)
@@ -987,6 +995,49 @@ export default function ExamView() {
       showToast(msg, 'error')
     } finally {
       setImportingOffline(false)
+    }
+  }
+
+  const handleExportAll = async () => {
+    if (!exam) return
+    setExporting(true)
+    try {
+      const blob = await exportAllSubmissions(exam.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${exam.title}_submissions.examdata`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      showToast(`Exported ${submissions.length} submission(s)`, 'success')
+    } catch {
+      showToast('Failed to export submissions.', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleBulkImport = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !exam) return
+    e.target.value = ''
+    setBulkImporting(true)
+    try {
+      const raw = await file.text()
+      const payload = JSON.parse(raw)
+      const result = await importAllSubmissions(exam.id, payload)
+      showToast(result.message, 'success')
+      // Reload submissions list.
+      getSubmissions(exam.id).then(setSubmissions).catch(() => {})
+      setSubPage(1)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'Import failed — the file may be invalid or tampered.'
+      showToast(msg, 'error')
+    } finally {
+      setBulkImporting(false)
     }
   }
 
@@ -1120,7 +1171,12 @@ export default function ExamView() {
     try {
       await deleteSubmission(confirmDelete.id)
       // Remove from local state immediately — no page reload needed.
-      setSubmissions(prev => prev.filter(s => s.id !== confirmDelete.id))
+      setSubmissions(prev => {
+        const next = prev.filter(s => s.id !== confirmDelete.id)
+        const maxPage = Math.max(1, Math.ceil(next.length / SUB_PER_PAGE))
+        setSubPage(p => Math.min(p, maxPage))
+        return next
+      })
       showToast('Submission deleted successfully.', 'success')
     } catch {
       showToast('Failed to delete submission. Please try again.', 'error')
@@ -1648,7 +1704,7 @@ export default function ExamView() {
       {/* ── Submissions tab ────────────────────────────────────────────────── */}
       {activeTab === 'submissions' && (
         <div>
-          {/* Hidden file input for offline import */}
+          {/* Hidden file inputs */}
           <input
             ref={offlineInputRef}
             type="file"
@@ -1656,9 +1712,16 @@ export default function ExamView() {
             style={{ display: 'none' }}
             onChange={handleImportOffline}
           />
+          <input
+            ref={bulkInputRef}
+            type="file"
+            accept=".examdata"
+            style={{ display: 'none' }}
+            onChange={handleBulkImport}
+          />
 
           {/* Toolbar row */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
             {/* Release All Graded Reports */}
             <button
               onClick={handleSendAllReports}
@@ -1680,6 +1743,40 @@ export default function ExamView() {
               {bulkSending ? '⏳ Sending…' : '📨 Release All Graded Reports'}
             </button>
 
+            {/* Download All Submissions */}
+            <button
+              onClick={handleExportAll}
+              disabled={exporting || submissions.length === 0}
+              title="Download all submissions as a single file for offline grading"
+              style={{
+                padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                background: exporting || submissions.length === 0 ? '#e5e7eb' : '#1a73e8',
+                color: exporting || submissions.length === 0 ? '#9ca3af' : 'white',
+                border: 'none', borderRadius: 7,
+                cursor: exporting || submissions.length === 0 ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {exporting ? '⏳ Exporting…' : '⬇ Download All'}
+            </button>
+
+            {/* Upload All Submissions */}
+            <button
+              onClick={() => bulkInputRef.current?.click()}
+              disabled={bulkImporting}
+              title="Upload a previously exported .examdata file to restore submissions"
+              style={{
+                padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                background: bulkImporting ? '#e5e7eb' : '#6d28d9',
+                color: bulkImporting ? '#9ca3af' : 'white',
+                border: 'none', borderRadius: 7,
+                cursor: bulkImporting ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {bulkImporting ? '⏳ Importing…' : '⬆ Upload Batch'}
+            </button>
+
             <button
               onClick={() => offlineInputRef.current?.click()}
               disabled={importingOffline}
@@ -1692,14 +1789,17 @@ export default function ExamView() {
               }}
               title="Upload a student's .exambackup file to record their answers"
             >
-              {importingOffline ? '⏳ Importing…' : '⬆ Import Offline Submission'}
+              {importingOffline ? '⏳ Importing…' : '⬆ Import Offline'}
             </button>
           </div>
 
           {submissions.length === 0 && (
             <p style={{ color: mutedText, fontSize: 14 }}>No submissions yet.</p>
           )}
-          {submissions.length > 0 && (
+          {submissions.length > 0 && (() => {
+            const totalSubPages = Math.ceil(submissions.length / SUB_PER_PAGE)
+            const pagedSubmissions = submissions.slice((subPage - 1) * SUB_PER_PAGE, subPage * SUB_PER_PAGE)
+            return (<>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr style={{ background: isDark ? '#0f172a' : '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
@@ -1715,7 +1815,7 @@ export default function ExamView() {
                 </tr>
               </thead>
               <tbody>
-                {submissions.map(s => (
+                {pagedSubmissions.map(s => (
                   <tr key={s.id} style={{ borderBottom: `1px solid ${isDark ? '#1e293b' : '#f3f4f6'}`, background: rowBg }}>
                     <td style={{ padding: '10px 12px', fontWeight: 600, color: isDark ? '#f1f5f9' : '#111827' }}>{s.student_name}</td>
                     <td style={{ padding: '10px 12px' }}>
@@ -1824,7 +1924,61 @@ export default function ExamView() {
                 ))}
               </tbody>
             </table>
-          )}
+
+            {/* Pagination controls */}
+            {totalSubPages > 1 && (
+              <div style={{
+                display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6,
+                marginTop: 16, flexWrap: 'wrap',
+              }}>
+                <button
+                  onClick={() => setSubPage(p => Math.max(1, p - 1))}
+                  disabled={subPage === 1}
+                  style={{
+                    padding: '6px 12px', fontSize: 13, fontWeight: 600,
+                    background: subPage === 1 ? (isDark ? '#1e293b' : '#f3f4f6') : (isDark ? '#334155' : '#e5e7eb'),
+                    color: subPage === 1 ? (isDark ? '#475569' : '#9ca3af') : (isDark ? '#e2e8f0' : '#374151'),
+                    border: 'none', borderRadius: 6,
+                    cursor: subPage === 1 ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  ← Prev
+                </button>
+                {Array.from({ length: totalSubPages }, (_, i) => i + 1).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setSubPage(p)}
+                    style={{
+                      padding: '6px 11px', fontSize: 13, fontWeight: subPage === p ? 800 : 500,
+                      background: subPage === p ? '#1a73e8' : 'transparent',
+                      color: subPage === p ? 'white' : (isDark ? '#94a3b8' : '#6b7280'),
+                      border: subPage === p ? 'none' : `1px solid ${isDark ? '#334155' : '#e5e7eb'}`,
+                      borderRadius: 6, cursor: 'pointer', minWidth: 36,
+                    }}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setSubPage(p => Math.min(totalSubPages, p + 1))}
+                  disabled={subPage === totalSubPages}
+                  style={{
+                    padding: '6px 12px', fontSize: 13, fontWeight: 600,
+                    background: subPage === totalSubPages ? (isDark ? '#1e293b' : '#f3f4f6') : (isDark ? '#334155' : '#e5e7eb'),
+                    color: subPage === totalSubPages ? (isDark ? '#475569' : '#9ca3af') : (isDark ? '#e2e8f0' : '#374151'),
+                    border: 'none', borderRadius: 6,
+                    cursor: subPage === totalSubPages ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Next →
+                </button>
+                <span style={{ fontSize: 12, color: isDark ? '#64748b' : '#9ca3af', marginLeft: 8 }}>
+                  {submissions.length} submission{submissions.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
+            </>)
+          })()}
         </div>
       )}
 
