@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  getExam, getSubmission, gradeSubmission, executeCode,
+  getExam, getSubmission, gradeSubmission, executeCode, autoGradeSubmission,
   Exam, Question, RunResult, Submission, SubmissionAnswer,
 } from '../api/client'
 import { useTheme } from '../contexts/ThemeContext'
@@ -517,9 +517,20 @@ function AnswerCard({ answer, question, grade, scoreError, onChange, isDark = fa
         )
       })()}
 
-      {isAutoGraded && answer.feedback && (
-        <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280' }}>
-          Feedback: {answer.feedback}
+      {/* Show feedback for auto-graded (MCQ/MRQ) or AI-graded (theory/code with [AI] prefix) */}
+      {answer.feedback && (answer.feedback.startsWith('[AI]') || isAutoGraded) && (
+        <p style={{
+          margin: '8px 0 0', fontSize: 12, lineHeight: 1.6,
+          color: answer.feedback.startsWith('[AI]') ? '#0369a1' : '#6b7280',
+          background: answer.feedback.startsWith('[AI]') ? '#f0f9ff' : 'transparent',
+          padding: answer.feedback.startsWith('[AI]') ? '6px 10px' : 0,
+          borderRadius: 6,
+          border: answer.feedback.startsWith('[AI]') ? '1px solid #bae6fd' : 'none',
+        }}>
+          {answer.feedback.startsWith('[AI]') && (
+            <span style={{ fontWeight: 700, marginRight: 4 }}>🤖</span>
+          )}
+          {answer.feedback}
         </p>
       )}
     </div>
@@ -544,6 +555,8 @@ export default function GradingView() {
 
   const [grades,      setGrades]      = useState<Record<number, LocalGrade>>({})
   const [scoreErrors, setScoreErrors] = useState<Record<number, string>>({})
+  const [autoGrading, setAutoGrading] = useState(false)
+  const [autoGradeMsg, setAutoGradeMsg] = useState<{ ok: boolean; msg: string } | null>(null)
 
   useEffect(() => {
     if (!examId || !submissionId) return
@@ -629,6 +642,32 @@ export default function GradingView() {
     }
   }, [submission, grades, scoreErrors, exam])
 
+  const handleAutoGrade = useCallback(async () => {
+    if (!submission) return
+    setAutoGrading(true)
+    setAutoGradeMsg(null)
+    try {
+      const updated = await autoGradeSubmission(submission.id)
+      setSubmission(updated)
+      // Refresh local grade state with new scores.
+      const refreshed: Record<number, LocalGrade> = {}
+      for (const a of updated.answers ?? []) {
+        refreshed[a.id] = {
+          score:    a.score != null ? String(a.score) : '',
+          feedback: a.feedback ?? '',
+        }
+      }
+      setGrades(refreshed)
+      setAutoGradeMsg({ ok: true, msg: 'AI grading complete!' })
+      setTimeout(() => setAutoGradeMsg(null), 5000)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setAutoGradeMsg({ ok: false, msg: msg ?? 'AI grading failed. Check your Gemini API key in Settings → AI Grading.' })
+    } finally {
+      setAutoGrading(false)
+    }
+  }, [submission])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -708,20 +747,42 @@ export default function GradingView() {
               ← Back to Results
             </button>
           </Link>
-          <button
-            onClick={handleSave}
-            disabled={saving || manualAnswers.length === 0 || hasErrors}
-            style={{
-              padding: '10px 28px', fontSize: 14, fontWeight: 700,
-              background: saving ? '#93c5fd' : (manualAnswers.length === 0 || hasErrors) ? '#d1d5db' : '#1a73e8',
-              color: 'white', border: 'none', borderRadius: 7,
-              cursor: (saving || manualAnswers.length === 0 || hasErrors) ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {saving ? 'Saving…' : 'Save Grades'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {manualAnswers.length > 0 && (
+              <button
+                onClick={handleAutoGrade}
+                disabled={autoGrading}
+                title="Use AI (Gemini) to automatically grade theory/code answers"
+                style={{
+                  padding: '10px 20px', fontSize: 14, fontWeight: 700,
+                  background: autoGrading ? '#86efac' : '#0f9d58',
+                  color: 'white', border: 'none', borderRadius: 7,
+                  cursor: autoGrading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {autoGrading ? '🤖 Grading…' : '🤖 AI Auto Grade'}
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving || manualAnswers.length === 0 || hasErrors}
+              style={{
+                padding: '10px 28px', fontSize: 14, fontWeight: 700,
+                background: saving ? '#93c5fd' : (manualAnswers.length === 0 || hasErrors) ? '#d1d5db' : '#1a73e8',
+                color: 'white', border: 'none', borderRadius: 7,
+                cursor: (saving || manualAnswers.length === 0 || hasErrors) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {saving ? 'Saving…' : 'Save Grades'}
+            </button>
+          </div>
+          {autoGradeMsg && (
+            <span style={{ fontSize: 13, color: autoGradeMsg.ok ? '#15803d' : '#dc2626', maxWidth: 480, textAlign: 'right' }}>
+              {autoGradeMsg.ok ? '✓ ' : '✗ '}{autoGradeMsg.msg}
+            </span>
+          )}
           {saved && <span style={{ fontSize: 13, color: '#15803d', fontWeight: 600 }}>✓ Saved successfully</span>}
-          {error && <span style={{ fontSize: 13, color: '#dc2626', maxWidth: 240, textAlign: 'right' }}>{error}</span>}
+          {error && <span style={{ fontSize: 13, color: '#dc2626', maxWidth: 480, textAlign: 'right' }}>{error}</span>}
           {manualAnswers.length === 0 && (
             <span style={{ fontSize: 12, color: '#9ca3af' }}>All answers are auto-graded</span>
           )}

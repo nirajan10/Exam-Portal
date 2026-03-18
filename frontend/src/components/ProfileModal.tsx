@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import {
   Teacher, uploadProfilePic,
   getMailSettings, saveMailSettings, testMailConnection,
+  getLLMSettings, saveLLMSettings,
   type MailSettings, type SaveMailSettingsPayload,
+  type LLMSettings, type SaveLLMSettingsPayload,
 } from '../api/client'
 
 interface Props {
@@ -317,12 +319,176 @@ function MailSettingsTab() {
   )
 }
 
+// ── LLM Settings tab ──────────────────────────────────────────────────────
+
+const GEMINI_MODELS = [
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Free)' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (Free)' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
+]
+
+function LLMSettingsTab() {
+  const [settings, setSettings] = useState<LLMSettings | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const [model, setModel] = useState('gemini-2.5-flash')
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+
+  const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    getLLMSettings()
+      .then(s => {
+        setSettings(s)
+        setModel(s.gemini_model || 'gemini-2.5-flash')
+      })
+      .catch(() => setSettings(null))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveStatus(null)
+    try {
+      const payload: SaveLLMSettingsPayload = {
+        gemini_model: model,
+        api_key: apiKey,
+      }
+      const updated = await saveLLMSettings(payload)
+      setSettings(updated)
+      setApiKey('')
+      setSaveStatus({ ok: true, msg: 'AI Grading settings saved.' })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setSaveStatus({ ok: false, msg: msg ?? 'Failed to save settings.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <div style={{ padding: '24px 0', textAlign: 'center', color: '#9ca3af', fontSize: 14 }}>Loading…</div>
+  }
+
+  return (
+    <div>
+      {/* Setup guide */}
+      <div style={{
+        background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+        padding: '14px 16px', marginBottom: 20,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>🤖</span>
+          <div>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: '#15803d' }}>
+              How to get your Gemini API Key (Free)
+            </p>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#166534', lineHeight: 1.8 }}>
+              <li>
+                Visit{' '}
+                <span style={{ fontFamily: 'monospace', fontSize: 11, background: '#dcfce7', padding: '1px 5px', borderRadius: 3 }}>
+                  aistudio.google.com/apikey
+                </span>
+              </li>
+              <li>Sign in with your Google account.</li>
+              <li>Click <strong>"Create API key"</strong> and select a project (or create one).</li>
+              <li>Copy the generated key and paste it below.</li>
+            </ol>
+            <p style={{ margin: '8px 0 0', fontSize: 11, color: '#166534' }}>
+              The free tier includes generous rate limits for Gemini Flash models — no billing required.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Fields */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <label style={labelStyle}>Model</label>
+          <select
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            style={{ ...inputStyle, cursor: 'pointer' }}
+          >
+            {GEMINI_MODELS.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>
+            Gemini 2.5 Flash is recommended — fast, accurate, and free.
+          </p>
+        </div>
+        <div>
+          <label style={labelStyle}>
+            Gemini API Key
+            {settings?.api_key_set && (
+              <span style={{ marginLeft: 6, fontWeight: 400, color: '#15803d', textTransform: 'none', fontSize: 11 }}>
+                ✓ saved
+              </span>
+            )}
+          </label>
+          <div style={{ position: 'relative' }}>
+            <input
+              style={{ ...inputStyle, paddingRight: 44 }}
+              type={showKey ? 'text' : 'password'}
+              placeholder={settings?.api_key_set ? 'Enter new key to replace' : 'Paste your Gemini API key'}
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(v => !v)}
+              style={{
+                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 14, color: '#9ca3af', padding: 2,
+              }}
+              title={showKey ? 'Hide' : 'Show'}
+            >
+              {showKey ? '🙈' : '👁️'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Status messages */}
+      {saveStatus && (
+        <p style={{ margin: '12px 0 0', fontSize: 13, color: saveStatus.ok ? '#15803d' : '#dc2626' }}>
+          {saveStatus.ok ? '✓ ' : '✗ '}{saveStatus.msg}
+        </p>
+      )}
+
+      {/* Save button */}
+      <div style={{ marginTop: 18 }}>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            width: '100%', padding: '9px 0', fontSize: 13, fontWeight: 600,
+            background: saving ? '#93c5fd' : '#1a73e8',
+            color: 'white', border: 'none', borderRadius: 6,
+            cursor: saving ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {saving ? 'Saving…' : 'Save Settings'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal shell ───────────────────────────────────────────────────────────────
 
 export default function ProfileModal({ teacher, onUpdated, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<'profile' | 'mail'>('profile')
+  const [activeTab, setActiveTab] = useState<'profile' | 'mail' | 'llm'>('profile')
 
-  const tabBtn = (tab: 'profile' | 'mail') => ({
+  const tabBtn = (tab: 'profile' | 'mail' | 'llm') => ({
     flex: 1, padding: '9px 0', fontSize: 13, fontWeight: 600 as const,
     border: 'none', cursor: 'pointer',
     borderBottom: activeTab === tab ? '2px solid #1a73e8' : '2px solid transparent',
@@ -362,16 +528,15 @@ export default function ProfileModal({ teacher, onUpdated, onClose }: Props) {
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #f3f4f6', margin: '12px 24px 0' }}>
           <button style={tabBtn('profile')} onClick={() => setActiveTab('profile')}>👤 Profile</button>
-          <button style={tabBtn('mail')} onClick={() => setActiveTab('mail')}>✉️ Mail Settings</button>
+          <button style={tabBtn('mail')} onClick={() => setActiveTab('mail')}>✉️ Mail</button>
+          <button style={tabBtn('llm')} onClick={() => setActiveTab('llm')}>🤖 AI Grading</button>
         </div>
 
         {/* Tab content */}
-        <div style={{ padding: '20px 24px 24px' }}>
-          {activeTab === 'profile' ? (
-            <ProfileTab teacher={teacher} onUpdated={onUpdated} />
-          ) : (
-            <MailSettingsTab />
-          )}
+        <div style={{ padding: '20px 24px 24px', maxHeight: 480, overflowY: 'auto' }}>
+          {activeTab === 'profile' && <ProfileTab teacher={teacher} onUpdated={onUpdated} />}
+          {activeTab === 'mail' && <MailSettingsTab />}
+          {activeTab === 'llm' && <LLMSettingsTab />}
         </div>
 
         {/* Close */}

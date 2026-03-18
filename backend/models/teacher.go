@@ -26,4 +26,9 @@ type Teacher struct {
 	SMTPSenderName  string `gorm:"type:varchar(255);default:''" json:"smtp_sender_name"`
 	SMTPEmail       string `gorm:"type:varchar(255);default:''" json:"smtp_email"`
 	SMTPAppPassword string `gorm:"type:text;default:''"         json:"-"`
+
+	// Gemini LLM settings for AI-powered auto-grading.
+	// GeminiAPIKey is AES-256-GCM encrypted at rest and NEVER serialised.
+	GeminiModel  string `gorm:"type:varchar(100);default:'gemini-2.5-flash'" json:"gemini_model"`
+	GeminiAPIKey string `gorm:"type:text;default:''"                         json:"-"`
 }

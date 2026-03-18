@@ -63,6 +63,10 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Put("/me/mail-settings", h.SaveMailSettings)
 	protected.Post("/me/mail-settings/test", h.TestMailConnection)
 
+	// LLM auto-grading settings — teacher's Gemini API key & model
+	protected.Get("/me/llm-settings", h.GetLLMSettings)
+	protected.Put("/me/llm-settings", h.SaveLLMSettings)
+
 	// Student performance reports
 	protected.Post("/reports/send/:id", h.SendReport)
 	protected.Post("/reports/send-all", h.SendAllReports)
@@ -71,7 +75,11 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Get("/submissions", h.ListSubmissions)
 	protected.Get("/submissions/:id", h.GetSubmission)
 	protected.Patch("/submissions/:id/grade", h.GradeSubmission)
+	protected.Post("/submissions/:id/auto-grade", h.AutoGradeSubmission)
 	protected.Delete("/submissions/:id", h.DeleteSubmission)
+
+	// Bulk LLM auto-grading for all pending submissions of an exam
+	protected.Post("/exams/:id/auto-grade-all", h.AutoGradeAllSubmissions)
 
 	// Analytics
 	protected.Get("/exams/:id/analytics", h.GetExamAnalytics)

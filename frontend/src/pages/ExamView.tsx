@@ -4,7 +4,7 @@ import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
   getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
-  getMailSettings, sendReport, sendAllReports,
+  getMailSettings, sendReport, sendAllReports, autoGradeAllSubmissions,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
 import { generateStudentPDF } from '../utils/generateStudentPDF'
@@ -957,6 +957,10 @@ export default function ExamView() {
   const [sendingReports, setSendingReports] = useState<Set<number>>(new Set())
   const [bulkSending, setBulkSending] = useState(false)
 
+  // AI auto-grading state
+  const [autoGradingAll, setAutoGradingAll] = useState(false)
+  const [autoGradeMsg, setAutoGradeMsg] = useState<{ ok: boolean; msg: string } | null>(null)
+
   // Dark-mode aware card background for submissions table
   const rowBg = isDark ? '#1e293b' : 'white'
   const mutedText = isDark ? '#94a3b8' : '#6b7280'
@@ -1111,6 +1115,30 @@ export default function ExamView() {
       showToast(msg, 'error')
     } finally {
       setBulkSending(false)
+    }
+  }
+
+  const handleAutoGradeAll = async () => {
+    if (!id) return
+    setAutoGradingAll(true)
+    setAutoGradeMsg(null)
+    try {
+      const res = await autoGradeAllSubmissions(Number(id))
+      if (res.graded === 0 && res.failed === 0) {
+        setAutoGradeMsg({ ok: true, msg: 'No pending submissions to grade.' })
+      } else {
+        setAutoGradeMsg({ ok: res.failed === 0, msg: res.message })
+      }
+      // Refresh submissions to show updated scores/statuses.
+      const refreshed = await getSubmissions(Number(id))
+      setSubmissions(refreshed)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'AI grading failed. Check your Gemini API key in Settings → AI Grading.'
+      setAutoGradeMsg({ ok: false, msg })
+    } finally {
+      setAutoGradingAll(false)
+      setTimeout(() => setAutoGradeMsg(null), 8000)
     }
   }
 
@@ -1657,8 +1685,39 @@ export default function ExamView() {
             onChange={handleImportOffline}
           />
 
+          {/* AI grading status */}
+          {autoGradeMsg && (
+            <div style={{
+              marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+              background: autoGradeMsg.ok ? '#dcfce7' : '#fee2e2',
+              border: `1px solid ${autoGradeMsg.ok ? '#86efac' : '#fca5a5'}`,
+              color: autoGradeMsg.ok ? '#15803d' : '#dc2626',
+            }}>
+              {autoGradeMsg.ok ? '✓ ' : '✗ '}{autoGradeMsg.msg}
+            </div>
+          )}
+
           {/* Toolbar row */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+            {/* AI Auto Grade All Pending */}
+            {submissions.some(s => s.status === 'pending_grading') && (
+              <button
+                onClick={handleAutoGradeAll}
+                disabled={autoGradingAll}
+                title="Use AI (Gemini) to grade all pending theory/code submissions"
+                style={{
+                  padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                  background: autoGradingAll ? '#86efac' : '#0f9d58',
+                  color: 'white',
+                  border: 'none', borderRadius: 7,
+                  cursor: autoGradingAll ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {autoGradingAll ? '🤖 Grading…' : '🤖 AI Grade All Pending'}
+              </button>
+            )}
+
             {/* Release All Graded Reports */}
             <button
               onClick={handleSendAllReports}

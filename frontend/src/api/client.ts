@@ -400,6 +400,34 @@ export interface ExamAnalytics {
 export const getExamAnalytics = (examId: string | number): Promise<ExamAnalytics> =>
   api.get<ExamAnalytics>(`/exams/${examId}/analytics`).then(r => r.data)
 
+// ── LLM auto-grading settings ────────────────────────────────────────────────
+
+export interface LLMSettings {
+  gemini_model: string
+  /** true when an encrypted API key exists in the DB (never the raw value) */
+  api_key_set: boolean
+}
+
+export interface SaveLLMSettingsPayload {
+  gemini_model: string
+  /** Plain-text API key. If empty, the stored key is unchanged. */
+  api_key: string
+}
+
+export const getLLMSettings = (): Promise<LLMSettings> =>
+  api.get<LLMSettings>('/me/llm-settings').then(r => r.data)
+
+export const saveLLMSettings = (payload: SaveLLMSettingsPayload): Promise<LLMSettings> =>
+  api.put<LLMSettings>('/me/llm-settings', payload).then(r => r.data)
+
+/** Auto-grade a single submission's theory/code answers using the teacher's Gemini API key. */
+export const autoGradeSubmission = (submissionId: number): Promise<Submission> =>
+  api.post<Submission>(`/submissions/${submissionId}/auto-grade`).then(r => r.data)
+
+/** Auto-grade all pending submissions for an exam. */
+export const autoGradeAllSubmissions = (examId: number): Promise<{ graded: number; failed: number; message: string }> =>
+  api.post<{ graded: number; failed: number; message: string }>(`/exams/${examId}/auto-grade-all`).then(r => r.data)
+
 // ── Mail settings ─────────────────────────────────────────────────────────────
 
 export interface MailSettings {
