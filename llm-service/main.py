@@ -113,6 +113,7 @@ IMPORTANT RULES:
 - A partially correct answer should receive partial marks.
 - Only give 0 marks if the answer is completely wrong or empty.
 - Be fair — do not penalize correct answers.
+- Ignore minor grammatical or spelling errors if the answer is otherwise correct.
 
 You MUST respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {"score": <number>, "feedback": "<brief feedback>"}"""
