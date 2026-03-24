@@ -502,3 +502,15 @@ export const listAllFeedback = (): Promise<Feedback[]> =>
 
 export const deleteFeedback = (id: number): Promise<void> =>
   api.delete(`/admin/feedback/${id}`).then(() => {})
+
+// ── Platform settings ──────────────────────────────────────────────────────
+
+export interface AppSettings {
+  llm_auto_grader: boolean
+}
+
+export const getAppSettings = (): Promise<AppSettings> =>
+  api.get<AppSettings>('/settings').then(r => r.data)
+
+export const updateAppSettings = (payload: Partial<AppSettings>): Promise<AppSettings> =>
+  api.patch<AppSettings>('/admin/settings', payload).then(r => r.data)

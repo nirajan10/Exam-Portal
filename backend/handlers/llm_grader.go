@@ -68,6 +68,10 @@ func (h *Handler) GetLLMHealth(c *fiber.Ctx) error {
 // to the local LLM service for grading.
 // POST /api/submissions/:id/auto-grade
 func (h *Handler) AutoGradeSubmission(c *fiber.Ctx) error {
+	if !h.isLLMEnabled() {
+		return fiber.NewError(fiber.StatusForbidden, "AI auto-grading is disabled by the administrator")
+	}
+
 	teacherID, err := middleware.ExtractTeacherID(c)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
@@ -154,6 +158,10 @@ type batchGradeItem struct {
 // for results. This avoids overloading the LLM — the queue processes one at a time.
 // POST /api/exams/:id/auto-grade-all
 func (h *Handler) AutoGradeAllSubmissions(c *fiber.Ctx) error {
+	if !h.isLLMEnabled() {
+		return fiber.NewError(fiber.StatusForbidden, "AI auto-grading is disabled by the administrator")
+	}
+
 	teacherID, err := middleware.ExtractTeacherID(c)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())

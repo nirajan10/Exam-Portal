@@ -92,6 +92,9 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Post("/submissions/:id/auto-grade", h.AutoGradeSubmission)
 	protected.Post("/exams/:id/auto-grade-all", h.AutoGradeAllSubmissions)
 
+	// Platform settings (read-only for teachers)
+	protected.Get("/settings", h.GetAppSettings)
+
 	// Code execution sandbox
 	protected.Post("/execute", h.Execute)
 
@@ -103,6 +106,7 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 		middleware.JWTMiddleware(jwtSecret),
 		middleware.RequireRole("superadmin"),
 	)
+	admin.Patch("/settings", h.UpdateAppSettings)
 	admin.Get("/teachers", h.ListTeachers)
 	admin.Post("/create-teacher", h.CreateTeacher)
 	admin.Patch("/teachers/:id/reset-password", h.ResetTeacherPassword)

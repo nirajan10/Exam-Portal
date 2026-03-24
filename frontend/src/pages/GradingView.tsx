@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { useParams, Link } from 'react-router-dom'
 import {
   getExam, getSubmission, gradeSubmission, executeCode, autoGradeSubmission,
+  getAppSettings,
   Exam, Question, RunResult, Submission, SubmissionAnswer,
 } from '../api/client'
 import { useTheme } from '../contexts/ThemeContext'
@@ -545,6 +546,7 @@ export default function GradingView() {
   const [grades,      setGrades]      = useState<Record<number, LocalGrade>>({})
   const [scoreErrors, setScoreErrors] = useState<Record<number, string>>({})
   const [autoGrading, setAutoGrading] = useState(false)
+  const [llmEnabled, setLlmEnabled] = useState(false)
 
   useEffect(() => {
     if (!examId || !submissionId) return
@@ -566,6 +568,9 @@ export default function GradingView() {
       })
       .catch(() => setError('Failed to load submission.'))
       .finally(() => setLoading(false))
+    getAppSettings()
+      .then(s => setLlmEnabled(s.llm_auto_grader))
+      .catch(() => setLlmEnabled(false))
   }, [examId, submissionId])
 
   // Validate score against question bounds and update grade + error state.
@@ -732,18 +737,20 @@ export default function GradingView() {
               ← Back to Results
             </button>
           </Link>
-          <button
-            onClick={handleAutoGrade}
-            disabled={autoGrading || manualAnswers.length === 0}
-            style={{
-              padding: '10px 22px', fontSize: 14, fontWeight: 700,
-              background: autoGrading ? '#a78bfa' : manualAnswers.length === 0 ? '#d1d5db' : '#7c3aed',
-              color: 'white', border: 'none', borderRadius: 7,
-              cursor: (autoGrading || manualAnswers.length === 0) ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {autoGrading ? '⏳ AI Grading…' : '🤖 AI Auto Grade'}
-          </button>
+          {llmEnabled && (
+            <button
+              onClick={handleAutoGrade}
+              disabled={autoGrading || manualAnswers.length === 0}
+              style={{
+                padding: '10px 22px', fontSize: 14, fontWeight: 700,
+                background: autoGrading ? '#a78bfa' : manualAnswers.length === 0 ? '#d1d5db' : '#7c3aed',
+                color: 'white', border: 'none', borderRadius: 7,
+                cursor: (autoGrading || manualAnswers.length === 0) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {autoGrading ? '⏳ AI Grading…' : '🤖 AI Auto Grade'}
+            </button>
+          )}
           <button
             onClick={handleSave}
             disabled={saving || manualAnswers.length === 0 || hasErrors}

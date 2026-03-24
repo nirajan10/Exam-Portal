@@ -6,6 +6,7 @@ import {
   getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineSubmission,
   exportWholeExam, autoGradeAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
+  getAppSettings,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
 import { generateStudentPDF } from '../utils/generateStudentPDF'
@@ -969,6 +970,7 @@ export default function ExamView() {
 
   // AI auto-grade state
   const [aiGradingAll, setAiGradingAll] = useState(false)
+  const [llmEnabled, setLlmEnabled] = useState(false)
 
   // Mail / report state
   const [mailConfigured, setMailConfigured] = useState(false)
@@ -1040,6 +1042,9 @@ export default function ExamView() {
     getMailSettings()
       .then(s => setMailConfigured(s.smtp_email !== '' && s.password_is_set))
       .catch(() => setMailConfigured(false))
+    getAppSettings()
+      .then(s => setLlmEnabled(s.llm_auto_grader))
+      .catch(() => setLlmEnabled(false))
   }, [])
 
   // Live countdown — ticks every second while the exam is active.
@@ -1732,37 +1737,39 @@ export default function ExamView() {
               {bulkSending ? '⏳ Sending…' : '📨 Release All Graded Reports'}
             </button>
 
-            {/* AI Grade All Pending */}
-            <button
-              onClick={async () => {
-                if (!id) return
-                setAiGradingAll(true)
-                try {
-                  const result = await autoGradeAllSubmissions(Number(id))
-                  setToast({ message: result.message, type: 'success' })
-                } catch {
-                  setToast({ message: 'AI grading may still be running in the background. Refreshing submissions…', type: 'error' })
-                } finally {
+            {/* AI Grade All Pending — hidden when admin disables LLM */}
+            {llmEnabled && (
+              <button
+                onClick={async () => {
+                  if (!id) return
+                  setAiGradingAll(true)
                   try {
-                    const fresh = await getSubmissions(Number(id))
-                    setSubmissions(fresh)
-                  } catch { /* ignore */ }
-                  setAiGradingAll(false)
-                }
-              }}
-              disabled={aiGradingAll || submissions.length === 0}
-              title="Use local AI to auto-grade all pending theory and code answers"
-              style={{
-                padding: '7px 16px', fontSize: 13, fontWeight: 600,
-                background: aiGradingAll || submissions.length === 0 ? '#e5e7eb' : '#7c3aed',
-                color: aiGradingAll || submissions.length === 0 ? '#9ca3af' : 'white',
-                border: 'none', borderRadius: 7,
-                cursor: aiGradingAll || submissions.length === 0 ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {aiGradingAll ? '⏳ AI Grading…' : '🤖 AI Grade All'}
-            </button>
+                    const result = await autoGradeAllSubmissions(Number(id))
+                    setToast({ message: result.message, type: 'success' })
+                  } catch {
+                    setToast({ message: 'AI grading may still be running in the background. Refreshing submissions…', type: 'error' })
+                  } finally {
+                    try {
+                      const fresh = await getSubmissions(Number(id))
+                      setSubmissions(fresh)
+                    } catch { /* ignore */ }
+                    setAiGradingAll(false)
+                  }
+                }}
+                disabled={aiGradingAll || submissions.length === 0}
+                title="Use local AI to auto-grade all pending theory and code answers"
+                style={{
+                  padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                  background: aiGradingAll || submissions.length === 0 ? '#e5e7eb' : '#7c3aed',
+                  color: aiGradingAll || submissions.length === 0 ? '#9ca3af' : 'white',
+                  border: 'none', borderRadius: 7,
+                  cursor: aiGradingAll || submissions.length === 0 ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {aiGradingAll ? '⏳ AI Grading…' : '🤖 AI Grade All'}
+              </button>
+            )}
 
             <button
               onClick={() => offlineInputRef.current?.click()}
