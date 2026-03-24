@@ -1617,8 +1617,8 @@ export default function StudentExam() {
                   {q.type === 'MCQ' && opts.map((opt, i) => (
                     <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 10,
                       marginBottom: 8, cursor: 'pointer', padding: '9px 12px', borderRadius: 7,
-                      background: answers[q.id] === opt ? '#eff6ff' : 'var(--card-bg2)',
-                      border: answers[q.id] === opt ? '1px solid #bfdbfe' : '1px solid var(--border)' }}>
+                      background: answers[q.id] === opt ? (isDark ? '#1e3a5f' : '#eff6ff') : 'var(--card-bg2)',
+                      border: answers[q.id] === opt ? `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` : '1px solid var(--border)' }}>
                       <input type="radio" name={`q-${q.id}`} value={opt}
                         checked={answers[q.id] === opt}
                         onChange={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))}
@@ -1633,8 +1633,8 @@ export default function StudentExam() {
                     return (
                       <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 10,
                         marginBottom: 8, cursor: 'pointer', padding: '9px 12px', borderRadius: 7,
-                        background: selected ? '#f5f3ff' : 'var(--card-bg2)',
-                        border: selected ? '1px solid #c4b5fd' : '1px solid var(--border)' }}>
+                        background: selected ? (isDark ? '#3b1f6e' : '#f5f3ff') : 'var(--card-bg2)',
+                        border: selected ? `1px solid ${isDark ? '#7c3aed' : '#c4b5fd'}` : '1px solid var(--border)' }}>
                         <input type="checkbox" value={opt} checked={selected}
                           onChange={() => toggleMrqOption(q.id, opt)}
                           style={{ width: 16, height: 16, accentColor: '#6d28d9', cursor: 'pointer' }} />

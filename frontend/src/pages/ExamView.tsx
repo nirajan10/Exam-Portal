@@ -719,6 +719,7 @@ function EditQuestionModal({ question, onSaved, onCancel }: {
 function QuestionRow({ q, idx, onDelete, onEdit, locked }: {
   q: Question; idx: number; onDelete: () => void; onEdit: () => void; locked?: boolean
 }) {
+  const { isDark } = useTheme()
   const opts = q.options as unknown as string[] | null
   const correct = q.correct_answers ?? []
 
@@ -759,8 +760,8 @@ function QuestionRow({ q, idx, onDelete, onEdit, locked }: {
               return (
                 <span key={i} style={{
                   fontSize: 12, padding: '2px 8px', borderRadius: 4,
-                  background: isCorrect ? '#dcfce7' : 'var(--card-bg)',
-                  color: isCorrect ? '#15803d' : 'var(--text)',
+                  background: isCorrect ? (isDark ? '#14532d' : '#dcfce7') : 'var(--card-bg)',
+                  color: isCorrect ? (isDark ? '#86efac' : '#15803d') : 'var(--text)',
                   fontWeight: isCorrect ? 600 : 400,
                 }}>
                   {opt}{isCorrect ? ' ✓' : ''}
@@ -1686,6 +1687,16 @@ export default function ExamView() {
                       </div>
                     )
                   })()}
+
+                  {/* Bottom "Add Question" shortcut — visible when list is long enough to scroll */}
+                  {qCount >= 3 && !exam.is_active && addingSetTo !== qs.id && (
+                    <button
+                      onClick={() => setAddingSetTo(qs.id)}
+                      style={{ ...btn('outline'), width: '100%', marginTop: 8, padding: '7px 0', fontSize: 13 }}
+                    >
+                      + Add Question
+                    </button>
+                  )}
 
                   {addingSetTo === qs.id && !exam.is_active && (
                     <AddQuestionForm
