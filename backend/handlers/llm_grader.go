@@ -62,7 +62,7 @@ func (h *Handler) GetLLMHealth(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "online"})
 }
 
-// ── Single submission auto-grade ────────────────────────────────────────────
+// ── Single submission auto-grade (synchronous) ─────────────────────────────
 
 // AutoGradeSubmission sends all ungraded theory/code answers of a submission
 // to the local LLM service for grading.
@@ -136,10 +136,22 @@ func (h *Handler) AutoGradeSubmission(c *fiber.Ctx) error {
 	})
 }
 
-// ── Bulk auto-grade all pending submissions ─────────────────────────────────
+// ── Bulk auto-grade all pending submissions (async via Celery) ──────────────
+
+// batchGradeItem matches the LLM service's BatchGradeItem schema.
+type batchGradeItem struct {
+	ID              string              `json:"id"`
+	QuestionContent string              `json:"question_content"`
+	QuestionType    string              `json:"question_type"`
+	MaxPoints       int                 `json:"max_points"`
+	StudentAnswer   string              `json:"student_answer"`
+	Language        string              `json:"language"`
+	ExecutionResult *llmExecutionResult `json:"execution_result,omitempty"`
+}
 
 // AutoGradeAllSubmissions grades all pending theory/code answers for an exam.
-// Processes one answer at a time with throttling to avoid overloading the LLM.
+// Submits all tasks to Celery via the LLM service's batch endpoint, then polls
+// for results. This avoids overloading the LLM — the queue processes one at a time.
 // POST /api/exams/:id/auto-grade-all
 func (h *Handler) AutoGradeAllSubmissions(c *fiber.Ctx) error {
 	teacherID, err := middleware.ExtractTeacherID(c)
@@ -165,13 +177,14 @@ func (h *Handler) AutoGradeAllSubmissions(c *fiber.Ctx) error {
 	var submissions []models.Submission
 	h.db.Preload("Answers").Where("exam_id = ?", examID).Find(&submissions)
 
-	// Collect all gradable answers across all submissions.
-	type gradableAnswer struct {
-		ans          models.SubmissionAnswer
-		q            models.Question
+	// Collect all gradable answers and pre-execute code questions.
+	type gradableItem struct {
+		answerID     uint
 		submissionID uint
+		batchItem    batchGradeItem
 	}
-	var toGrade []gradableAnswer
+	var items []gradableItem
+
 	for _, sub := range submissions {
 		for _, ans := range sub.Answers {
 			q, ok := qMap[ans.QuestionID]
@@ -181,37 +194,172 @@ func (h *Handler) AutoGradeAllSubmissions(c *fiber.Ctx) error {
 			if ans.Answer == "" || ans.Answer == "[]" {
 				continue
 			}
-			toGrade = append(toGrade, gradableAnswer{ans: ans, q: q, submissionID: sub.ID})
+
+			item := batchGradeItem{
+				ID:              fmt.Sprintf("%d", ans.ID),
+				QuestionContent: q.Content,
+				QuestionType:    string(q.Type),
+				MaxPoints:       q.Points,
+				StudentAnswer:   ans.Answer,
+				Language:         q.Language,
+			}
+
+			// Pre-execute code questions in sandbox.
+			if q.Type == models.QuestionTypeCode && h.runner != nil && q.Language != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				execResult, execErr := h.runner.Run(ctx, runner.Language(q.Language), ans.Answer, "")
+				cancel()
+				if execErr != nil {
+					log.Printf("Code execution failed for answer %d: %v", ans.ID, execErr)
+				} else {
+					item.ExecutionResult = &llmExecutionResult{
+						Stdout:   execResult.Stdout,
+						Stderr:   execResult.Stderr,
+						ExitCode: execResult.ExitCode,
+						TimedOut: execResult.TimedOut,
+					}
+				}
+			}
+
+			items = append(items, gradableItem{
+				answerID:     ans.ID,
+				submissionID: sub.ID,
+				batchItem:    item,
+			})
 		}
 	}
 
+	if len(items) == 0 {
+		return c.JSON(fiber.Map{
+			"submissions_processed": 0,
+			"answers_graded":        0,
+			"answers_failed":        0,
+			"message":               "No gradable answers found",
+		})
+	}
+
+	// Submit batch to the LLM service's Celery queue.
+	batchItems := make([]batchGradeItem, len(items))
+	for i, it := range items {
+		batchItems[i] = it.batchItem
+	}
+
+	batchBody, _ := json.Marshal(map[string]interface{}{"items": batchItems})
+	batchResp, err := llmHTTPClient.Post(
+		h.cfg.LLMServiceURL+"/grade/batch",
+		"application/json",
+		bytes.NewReader(batchBody),
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("LLM service unreachable: %v", err))
+	}
+	defer batchResp.Body.Close()
+
+	if batchResp.StatusCode != 200 {
+		body, _ := io.ReadAll(batchResp.Body)
+		return fiber.NewError(fiber.StatusBadGateway,
+			fmt.Sprintf("LLM batch submit failed (%d): %s", batchResp.StatusCode, string(body)))
+	}
+
+	var batchResult struct {
+		Tasks map[string]string `json:"tasks"` // caller_id → celery_task_id
+		Total int               `json:"total"`
+	}
+	json.NewDecoder(batchResp.Body).Decode(&batchResult)
+
+	// Build mapping: celery_task_id → answer info.
+	type pendingTask struct {
+		answerID     uint
+		submissionID uint
+		maxPoints    int
+	}
+	pending := make(map[string]pendingTask)
+	for _, it := range items {
+		celeryID, ok := batchResult.Tasks[it.batchItem.ID]
+		if !ok {
+			continue
+		}
+		pending[celeryID] = pendingTask{
+			answerID:     it.answerID,
+			submissionID: it.submissionID,
+			maxPoints:    it.batchItem.MaxPoints,
+		}
+	}
+
+	// Poll for results until all done or timeout.
 	totalGraded := 0
 	totalFailed := 0
 	touchedSubmissions := make(map[uint]bool)
+	deadline := time.Now().Add(30 * time.Minute)
 
-	for i, item := range toGrade {
-		// Throttle: 1 second between calls to let the LLM service finish cleanly.
-		if i > 0 {
-			time.Sleep(1 * time.Second)
+	for len(pending) > 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+
+		// Collect all pending task IDs.
+		taskIDs := make([]string, 0, len(pending))
+		for tid := range pending {
+			taskIDs = append(taskIDs, tid)
 		}
 
-		result, err := h.callLLMGradeWithRetry(item.q, item.ans)
+		statusBody, _ := json.Marshal(map[string]interface{}{"task_ids": taskIDs})
+		statusResp, err := llmHTTPClient.Post(
+			h.cfg.LLMServiceURL+"/grade/status",
+			"application/json",
+			bytes.NewReader(statusBody),
+		)
 		if err != nil {
-			log.Printf("LLM grade error for answer %d (submission %d): %v",
-				item.ans.ID, item.submissionID, err)
-			totalFailed++
+			log.Printf("Failed to poll task status: %v", err)
 			continue
 		}
 
-		h.db.Model(&models.SubmissionAnswer{}).
-			Where("id = ?", item.ans.ID).
-			Updates(map[string]interface{}{
-				"score":    result.Score,
-				"feedback": result.Feedback,
-			})
-		totalGraded++
-		touchedSubmissions[item.submissionID] = true
+		var statusResult struct {
+			Tasks map[string]struct {
+				State  string           `json:"state"`
+				Result *llmGradeResponse `json:"result,omitempty"`
+				Error  string           `json:"error,omitempty"`
+			} `json:"tasks"`
+		}
+		json.NewDecoder(statusResp.Body).Decode(&statusResult)
+		statusResp.Body.Close()
+
+		for tid, status := range statusResult.Tasks {
+			pt, ok := pending[tid]
+			if !ok {
+				continue
+			}
+
+			switch status.State {
+			case "SUCCESS":
+				if status.Result != nil {
+					score := status.Result.Score
+					if score < 0 {
+						score = 0
+					}
+					if score > float64(pt.maxPoints) {
+						score = float64(pt.maxPoints)
+					}
+					h.db.Model(&models.SubmissionAnswer{}).
+						Where("id = ?", pt.answerID).
+						Updates(map[string]interface{}{
+							"score":    score,
+							"feedback": status.Result.Feedback,
+						})
+					totalGraded++
+					touchedSubmissions[pt.submissionID] = true
+				}
+				delete(pending, tid)
+
+			case "FAILURE":
+				log.Printf("Celery task %s failed for answer %d: %s", tid, pt.answerID, status.Error)
+				totalFailed++
+				delete(pending, tid)
+			}
+			// PENDING / STARTED → keep polling
+		}
 	}
+
+	// Count anything still pending as failed (timeout).
+	totalFailed += len(pending)
 
 	// Recalculate totals for all affected submissions.
 	for subID := range touchedSubmissions {

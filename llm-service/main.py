@@ -258,3 +258,62 @@ def grade(req: GradeRequest):
 
     logger.info("Graded: score=%.1f feedback=%s", result.score, result.feedback[:100])
     return result
+
+
+# ── Async grading via Celery ────────────────────────────────────────────────
+
+from tasks import celery_app as _celery_app, grade_answer  # noqa: E402
+
+
+class BatchGradeItem(BaseModel):
+    """One item in a batch grading request."""
+    id: str  # caller-defined key so results can be mapped back
+    question_content: str
+    question_type: str
+    max_points: int
+    student_answer: str
+    language: str = ""
+    execution_result: ExecutionResult | None = None
+
+
+class BatchGradeRequest(BaseModel):
+    items: list[BatchGradeItem]
+
+
+@app.post("/grade/batch")
+def grade_batch(req: BatchGradeRequest):
+    """Submit a batch of grading tasks to the Celery queue.
+
+    Returns a mapping of caller id → Celery task id so the caller can poll.
+    """
+    task_map: dict[str, str] = {}
+    for item in req.items:
+        payload = item.model_dump()
+        # Convert execution_result from Pydantic model to plain dict for JSON serialization.
+        if payload.get("execution_result") is not None:
+            payload["execution_result"] = dict(payload["execution_result"])
+        task = grade_answer.delay(payload)
+        task_map[item.id] = task.id
+    return {"tasks": task_map, "total": len(task_map)}
+
+
+class TaskStatusRequest(BaseModel):
+    task_ids: list[str]
+
+
+@app.post("/grade/status")
+def grade_status(req: TaskStatusRequest):
+    """Check the status of one or more Celery tasks.
+
+    Returns a dict of task_id → {state, result} for each requested task.
+    """
+    results: dict[str, dict] = {}
+    for tid in req.task_ids:
+        ar = _celery_app.AsyncResult(tid)
+        entry: dict = {"state": ar.state}
+        if ar.state == "SUCCESS":
+            entry["result"] = ar.result
+        elif ar.state == "FAILURE":
+            entry["error"] = str(ar.result)
+        results[tid] = entry
+    return {"tasks": results}

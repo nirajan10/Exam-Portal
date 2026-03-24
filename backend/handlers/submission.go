@@ -783,6 +783,74 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 	return submission, txErr
 }
 
+// remapOfflineQuestionIDs maps question IDs from an offline submission file to
+// the target exam's question IDs. This handles the case where the exam was
+// deleted and reimported — same questions exist but with new DB IDs. Matching
+// is done positionally within the question set identified by payload.SetName.
+func (h *Handler) remapOfflineQuestionIDs(payload *offlinePayload, targetExamID uint) error {
+	// Find question sets in the target exam.
+	var targetSets []models.QuestionSet
+	if err := h.db.Where("exam_id = ?", targetExamID).Order("\"order\" ASC, id ASC").
+		Find(&targetSets).Error; err != nil || len(targetSets) == 0 {
+		return fmt.Errorf("target exam has no question sets")
+	}
+
+	// Match by set_name; fall back to single-set exam.
+	var matchedSet *models.QuestionSet
+	if payload.SetName != "" {
+		for i := range targetSets {
+			if targetSets[i].Title == payload.SetName {
+				matchedSet = &targetSets[i]
+				break
+			}
+		}
+	}
+	if matchedSet == nil && len(targetSets) == 1 {
+		matchedSet = &targetSets[0]
+	}
+	if matchedSet == nil {
+		return fmt.Errorf("could not match question set %q in target exam", payload.SetName)
+	}
+
+	// Load questions from the matched set in creation order.
+	var targetQuestions []models.Question
+	if err := h.db.Where("question_set_id = ?", matchedSet.ID).
+		Order("id ASC").Find(&targetQuestions).Error; err != nil {
+		return fmt.Errorf("could not load questions from target exam")
+	}
+
+	// Collect unique old question IDs in sorted order.
+	seen := map[uint]bool{}
+	oldIDs := make([]uint, 0, len(payload.Answers))
+	for _, a := range payload.Answers {
+		if a.QuestionID != 0 && !seen[a.QuestionID] {
+			seen[a.QuestionID] = true
+			oldIDs = append(oldIDs, a.QuestionID)
+		}
+	}
+	sort.Slice(oldIDs, func(i, j int) bool { return oldIDs[i] < oldIDs[j] })
+
+	if len(oldIDs) != len(targetQuestions) {
+		return fmt.Errorf(
+			"question count mismatch: offline file has %d questions, target set %q has %d",
+			len(oldIDs), matchedSet.Title, len(targetQuestions))
+	}
+
+	// Positional remap: sorted old ID[i] → target question ID[i].
+	remap := make(map[uint]uint, len(oldIDs))
+	for i, oldID := range oldIDs {
+		remap[oldID] = targetQuestions[i].ID
+	}
+
+	for i := range payload.Answers {
+		if newID, ok := remap[payload.Answers[i].QuestionID]; ok {
+			payload.Answers[i].QuestionID = newID
+		}
+	}
+	payload.ExamID = int(targetExamID)
+	return nil
+}
+
 // ── Import handlers ───────────────────────────────────────────────────────────
 
 // ImportOfflineSubmission imports a backup file for a specific exam (exam id in URL).
@@ -807,8 +875,14 @@ func (h *Handler) ImportOfflineSubmission(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+
+	// If the file was created for a different exam (e.g. exam was deleted and
+	// reimported), remap question IDs to match the target exam.
 	if payload.ExamID != examID {
-		return fiber.NewError(fiber.StatusBadRequest, "file belongs to a different exam")
+		if err := h.remapOfflineQuestionIDs(&payload, uint(examID)); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest,
+				"cannot remap offline submission to this exam: "+err.Error())
+		}
 	}
 
 	submission, txErr := h.runOfflineImportTx(payload)

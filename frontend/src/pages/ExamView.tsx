@@ -3,7 +3,7 @@ import { useParams, useSearchParams, Link } from 'react-router-dom'
 import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
-  getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
+  getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineSubmission,
   exportWholeExam, autoGradeAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
   UploadResult, Exam, Question, QuestionSet, Submission,
@@ -993,11 +993,8 @@ export default function ExamView() {
     try {
       const raw = await file.text()
       // The file content is a base64 string wrapped in btoa(), so it IS the base64 data.
-      const imported = await importOfflineAuto(raw.trim())
-      // Only add to the current list if it belongs to the exam we're viewing.
-      if (exam && imported.exam_id === exam.id) {
-        setSubmissions(prev => [imported, ...prev])
-      }
+      const imported = await importOfflineSubmission(exam.id, raw.trim())
+      setSubmissions(prev => [imported, ...prev])
       showToast(`Imported: ${imported.student_name} (${imported.student_email})`, 'success')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error

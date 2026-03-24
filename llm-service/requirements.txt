@@ -3,3 +3,5 @@ uvicorn[standard]==0.30.0
 llama-cpp-python==0.3.4
 pydantic==2.9.0
 huggingface-hub==0.26.0
+celery[redis]==5.4.0
+redis==5.0.0
