@@ -28,6 +28,7 @@ services:
       PORT: 8080
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      LLM_SERVICE_URL: http://llm-service:8000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - uploads:/app/uploads
@@ -38,6 +39,32 @@ services:
       - internal
     ports:
       - "8080:8080"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  llm-service:
+    build: ./llm-service
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - llm-models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    ports:
+      - "8000:8000"
 
   frontend:
     build: ./frontend
@@ -52,6 +79,7 @@ services:
 volumes:
   pgdata:
   uploads:
+  llm-models:
 
 networks:
   internal:

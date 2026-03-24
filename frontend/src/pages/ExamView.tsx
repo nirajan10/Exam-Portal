@@ -3,9 +3,10 @@ import { useParams, useSearchParams, Link } from 'react-router-dom'
 import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
-  getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
-  exportAllSubmissions, importAllSubmissions,
+  getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineSubmission,
+  exportWholeExam, autoGradeAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
+  getAppSettings,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
 import { generateStudentPDF } from '../utils/generateStudentPDF'
@@ -718,6 +719,7 @@ function EditQuestionModal({ question, onSaved, onCancel }: {
 function QuestionRow({ q, idx, onDelete, onEdit, locked }: {
   q: Question; idx: number; onDelete: () => void; onEdit: () => void; locked?: boolean
 }) {
+  const { isDark } = useTheme()
   const opts = q.options as unknown as string[] | null
   const correct = q.correct_answers ?? []
 
@@ -758,8 +760,8 @@ function QuestionRow({ q, idx, onDelete, onEdit, locked }: {
               return (
                 <span key={i} style={{
                   fontSize: 12, padding: '2px 8px', borderRadius: 4,
-                  background: isCorrect ? '#dcfce7' : 'var(--card-bg)',
-                  color: isCorrect ? '#15803d' : 'var(--text)',
+                  background: isCorrect ? (isDark ? '#14532d' : '#dcfce7') : 'var(--card-bg)',
+                  color: isCorrect ? (isDark ? '#86efac' : '#15803d') : 'var(--text)',
                   fontWeight: isCorrect ? 600 : 400,
                 }}>
                   {opt}{isCorrect ? ' ✓' : ''}
@@ -923,7 +925,7 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' }
 
 export default function ExamView() {
   const { id } = useParams<{ id: string }>()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { isDark } = useTheme()
   const [exam, setExam] = useState<Exam | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
@@ -931,8 +933,17 @@ export default function ExamView() {
   const SUB_PER_PAGE = 10
   const [newSetTitle, setNewSetTitle] = useState('')
   const [addingSetTo, setAddingSetTo] = useState<number | null>(null)
-  const initialTab = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
-  const [activeTab, setActiveTab] = useState<'questions' | 'submissions' | 'analytics'>(initialTab)
+  const tabParam = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
+  const [activeTab, setActiveTabRaw] = useState<'questions' | 'submissions' | 'analytics'>(tabParam)
+
+  // Keep the URL ?tab= param in sync so browser back/forward preserves the active tab.
+  const setActiveTab = (tab: 'questions' | 'submissions' | 'analytics') => {
+    setActiveTabRaw(tab)
+    setSearchParams(tab === 'questions' ? {} : { tab }, { replace: true })
+  }
+
+  // Sync tab state when the URL search param changes (e.g. navigating back from grading view).
+  useEffect(() => { setActiveTabRaw(tabParam) }, [tabParam])
   const [uploadStates, setUploadStates] = useState<Record<number, SetUploadState>>({})
   const [collapsedSets, setCollapsedSets] = useState<Set<number>>(new Set())
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
@@ -955,10 +966,12 @@ export default function ExamView() {
   const offlineInputRef = useRef<HTMLInputElement>(null)
   const [importingOffline, setImportingOffline] = useState(false)
 
-  // Bulk export / import state
-  const bulkInputRef = useRef<HTMLInputElement>(null)
+  // Whole-exam export state
   const [exporting, setExporting] = useState(false)
-  const [bulkImporting, setBulkImporting] = useState(false)
+
+  // AI auto-grade state
+  const [aiGradingAll, setAiGradingAll] = useState(false)
+  const [llmEnabled, setLlmEnabled] = useState(false)
 
   // Mail / report state
   const [mailConfigured, setMailConfigured] = useState(false)
@@ -983,11 +996,8 @@ export default function ExamView() {
     try {
       const raw = await file.text()
       // The file content is a base64 string wrapped in btoa(), so it IS the base64 data.
-      const imported = await importOfflineAuto(raw.trim())
-      // Only add to the current list if it belongs to the exam we're viewing.
-      if (exam && imported.exam_id === exam.id) {
-        setSubmissions(prev => [imported, ...prev])
-      }
+      const imported = await importOfflineSubmission(exam.id, raw.trim())
+      setSubmissions(prev => [imported, ...prev])
       showToast(`Imported: ${imported.student_name} (${imported.student_email})`, 'success')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -998,46 +1008,24 @@ export default function ExamView() {
     }
   }
 
-  const handleExportAll = async () => {
+  const handleExportExam = async () => {
     if (!exam) return
     setExporting(true)
     try {
-      const blob = await exportAllSubmissions(exam.id)
+      const blob = await exportWholeExam(exam.id)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${exam.title}_submissions.examdata`
+      a.download = `${exam.title}.examfull`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      showToast(`Exported ${submissions.length} submission(s)`, 'success')
+      showToast('Exam exported successfully', 'success')
     } catch {
-      showToast('Failed to export submissions.', 'error')
+      showToast('Failed to export exam.', 'error')
     } finally {
       setExporting(false)
-    }
-  }
-
-  const handleBulkImport = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !exam) return
-    e.target.value = ''
-    setBulkImporting(true)
-    try {
-      const raw = await file.text()
-      const payload = JSON.parse(raw)
-      const result = await importAllSubmissions(exam.id, payload)
-      showToast(result.message, 'success')
-      // Reload submissions list.
-      getSubmissions(exam.id).then(setSubmissions).catch(() => {})
-      setSubPage(1)
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'Import failed — the file may be invalid or tampered.'
-      showToast(msg, 'error')
-    } finally {
-      setBulkImporting(false)
     }
   }
 
@@ -1055,6 +1043,9 @@ export default function ExamView() {
     getMailSettings()
       .then(s => setMailConfigured(s.smtp_email !== '' && s.password_is_set))
       .catch(() => setMailConfigured(false))
+    getAppSettings()
+      .then(s => setLlmEnabled(s.llm_auto_grader))
+      .catch(() => setLlmEnabled(false))
   }, [])
 
   // Live countdown — ticks every second while the exam is active.
@@ -1395,6 +1386,17 @@ export default function ExamView() {
           >
             {togglingStatus ? '…' : exam.is_active ? 'Stop Exam' : 'Start Exam'}
           </button>
+          <button
+            onClick={handleExportExam}
+            disabled={exporting}
+            title="Download this exam (questions, submissions, settings) as a portable file"
+            style={{
+              ...btn('outline'),
+              opacity: exporting ? 0.6 : 1,
+            }}
+          >
+            {exporting ? '⏳ Exporting…' : '⬇ Export Exam'}
+          </button>
           {!exam.is_active ? (
             <Link to={`/exams/${exam.id}/edit`}>
               <button style={{ ...btn('outline') }}>Edit Settings</button>
@@ -1686,6 +1688,16 @@ export default function ExamView() {
                     )
                   })()}
 
+                  {/* Bottom "Add Question" shortcut — visible when list is long enough to scroll */}
+                  {qCount >= 3 && !exam.is_active && addingSetTo !== qs.id && (
+                    <button
+                      onClick={() => setAddingSetTo(qs.id)}
+                      style={{ ...btn('outline'), width: '100%', marginTop: 8, padding: '7px 0', fontSize: 13 }}
+                    >
+                      + Add Question
+                    </button>
+                  )}
+
                   {addingSetTo === qs.id && !exam.is_active && (
                     <AddQuestionForm
                       questionSetId={qs.id}
@@ -1704,20 +1716,13 @@ export default function ExamView() {
       {/* ── Submissions tab ────────────────────────────────────────────────── */}
       {activeTab === 'submissions' && (
         <div>
-          {/* Hidden file inputs */}
+          {/* Hidden file input */}
           <input
             ref={offlineInputRef}
             type="file"
             accept=".exambackup"
             style={{ display: 'none' }}
             onChange={handleImportOffline}
-          />
-          <input
-            ref={bulkInputRef}
-            type="file"
-            accept=".examdata"
-            style={{ display: 'none' }}
-            onChange={handleBulkImport}
           />
 
           {/* Toolbar row */}
@@ -1743,39 +1748,39 @@ export default function ExamView() {
               {bulkSending ? '⏳ Sending…' : '📨 Release All Graded Reports'}
             </button>
 
-            {/* Download All Submissions */}
-            <button
-              onClick={handleExportAll}
-              disabled={exporting || submissions.length === 0}
-              title="Download all submissions as a single file for offline grading"
-              style={{
-                padding: '7px 16px', fontSize: 13, fontWeight: 600,
-                background: exporting || submissions.length === 0 ? '#e5e7eb' : '#1a73e8',
-                color: exporting || submissions.length === 0 ? '#9ca3af' : 'white',
-                border: 'none', borderRadius: 7,
-                cursor: exporting || submissions.length === 0 ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {exporting ? '⏳ Exporting…' : '⬇ Download All'}
-            </button>
-
-            {/* Upload All Submissions */}
-            <button
-              onClick={() => bulkInputRef.current?.click()}
-              disabled={bulkImporting}
-              title="Upload a previously exported .examdata file to restore submissions"
-              style={{
-                padding: '7px 16px', fontSize: 13, fontWeight: 600,
-                background: bulkImporting ? '#e5e7eb' : '#6d28d9',
-                color: bulkImporting ? '#9ca3af' : 'white',
-                border: 'none', borderRadius: 7,
-                cursor: bulkImporting ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {bulkImporting ? '⏳ Importing…' : '⬆ Upload Batch'}
-            </button>
+            {/* AI Grade All Pending — hidden when admin disables LLM */}
+            {llmEnabled && (
+              <button
+                onClick={async () => {
+                  if (!id) return
+                  setAiGradingAll(true)
+                  try {
+                    const result = await autoGradeAllSubmissions(Number(id))
+                    setToast({ message: result.message, type: 'success' })
+                  } catch {
+                    setToast({ message: 'AI grading may still be running in the background. Refreshing submissions…', type: 'error' })
+                  } finally {
+                    try {
+                      const fresh = await getSubmissions(Number(id))
+                      setSubmissions(fresh)
+                    } catch { /* ignore */ }
+                    setAiGradingAll(false)
+                  }
+                }}
+                disabled={aiGradingAll || submissions.length === 0}
+                title="Use local AI to auto-grade all pending theory and code answers"
+                style={{
+                  padding: '7px 16px', fontSize: 13, fontWeight: 600,
+                  background: aiGradingAll || submissions.length === 0 ? '#e5e7eb' : '#7c3aed',
+                  color: aiGradingAll || submissions.length === 0 ? '#9ca3af' : 'white',
+                  border: 'none', borderRadius: 7,
+                  cursor: aiGradingAll || submissions.length === 0 ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {aiGradingAll ? '⏳ AI Grading…' : '🤖 AI Grade All'}
+              </button>
+            )}
 
             <button
               onClick={() => offlineInputRef.current?.click()}

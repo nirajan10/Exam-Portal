@@ -783,6 +783,74 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 	return submission, txErr
 }
 
+// remapOfflineQuestionIDs maps question IDs from an offline submission file to
+// the target exam's question IDs. This handles the case where the exam was
+// deleted and reimported — same questions exist but with new DB IDs. Matching
+// is done positionally within the question set identified by payload.SetName.
+func (h *Handler) remapOfflineQuestionIDs(payload *offlinePayload, targetExamID uint) error {
+	// Find question sets in the target exam.
+	var targetSets []models.QuestionSet
+	if err := h.db.Where("exam_id = ?", targetExamID).Order("\"order\" ASC, id ASC").
+		Find(&targetSets).Error; err != nil || len(targetSets) == 0 {
+		return fmt.Errorf("target exam has no question sets")
+	}
+
+	// Match by set_name; fall back to single-set exam.
+	var matchedSet *models.QuestionSet
+	if payload.SetName != "" {
+		for i := range targetSets {
+			if targetSets[i].Title == payload.SetName {
+				matchedSet = &targetSets[i]
+				break
+			}
+		}
+	}
+	if matchedSet == nil && len(targetSets) == 1 {
+		matchedSet = &targetSets[0]
+	}
+	if matchedSet == nil {
+		return fmt.Errorf("could not match question set %q in target exam", payload.SetName)
+	}
+
+	// Load questions from the matched set in creation order.
+	var targetQuestions []models.Question
+	if err := h.db.Where("question_set_id = ?", matchedSet.ID).
+		Order("id ASC").Find(&targetQuestions).Error; err != nil {
+		return fmt.Errorf("could not load questions from target exam")
+	}
+
+	// Collect unique old question IDs in sorted order.
+	seen := map[uint]bool{}
+	oldIDs := make([]uint, 0, len(payload.Answers))
+	for _, a := range payload.Answers {
+		if a.QuestionID != 0 && !seen[a.QuestionID] {
+			seen[a.QuestionID] = true
+			oldIDs = append(oldIDs, a.QuestionID)
+		}
+	}
+	sort.Slice(oldIDs, func(i, j int) bool { return oldIDs[i] < oldIDs[j] })
+
+	if len(oldIDs) != len(targetQuestions) {
+		return fmt.Errorf(
+			"question count mismatch: offline file has %d questions, target set %q has %d",
+			len(oldIDs), matchedSet.Title, len(targetQuestions))
+	}
+
+	// Positional remap: sorted old ID[i] → target question ID[i].
+	remap := make(map[uint]uint, len(oldIDs))
+	for i, oldID := range oldIDs {
+		remap[oldID] = targetQuestions[i].ID
+	}
+
+	for i := range payload.Answers {
+		if newID, ok := remap[payload.Answers[i].QuestionID]; ok {
+			payload.Answers[i].QuestionID = newID
+		}
+	}
+	payload.ExamID = int(targetExamID)
+	return nil
+}
+
 // ── Import handlers ───────────────────────────────────────────────────────────
 
 // ImportOfflineSubmission imports a backup file for a specific exam (exam id in URL).
@@ -807,8 +875,14 @@ func (h *Handler) ImportOfflineSubmission(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+
+	// If the file was created for a different exam (e.g. exam was deleted and
+	// reimported), remap question IDs to match the target exam.
 	if payload.ExamID != examID {
-		return fiber.NewError(fiber.StatusBadRequest, "file belongs to a different exam")
+		if err := h.remapOfflineQuestionIDs(&payload, uint(examID)); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest,
+				"cannot remap offline submission to this exam: "+err.Error())
+		}
 	}
 
 	submission, txErr := h.runOfflineImportTx(payload)
@@ -848,208 +922,3 @@ func (h *Handler) ImportOfflineAuto(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(submission)
 }
 
-// ── Bulk export / import ─────────────────────────────────────────────────────
-
-type bulkExportAnswer struct {
-	QuestionID uint     `json:"question_id"`
-	Answer     string   `json:"answer"`
-	Score      *float64 `json:"score"`
-	Feedback   string   `json:"feedback"`
-}
-
-type bulkExportSubmission struct {
-	SessionID    string             `json:"session_id"`
-	SetName      string             `json:"set_name"`
-	StudentName  string             `json:"student_name"`
-	StudentEmail string             `json:"student_email"`
-	SubmittedAt  string             `json:"submitted_at"`
-	TotalScore   float64            `json:"total_score"`
-	Status       string             `json:"status"`
-	Answers      []bulkExportAnswer `json:"answers"`
-}
-
-type bulkExportPayload struct {
-	Version     int                    `json:"v"`
-	ExamID      uint                   `json:"exam_id"`
-	ExamTitle   string                 `json:"exam_title"`
-	ExportedAt  string                 `json:"exported_at"`
-	Submissions []bulkExportSubmission `json:"submissions"`
-	Hash        string                 `json:"hash"`
-}
-
-func computeBulkHash(examID uint, submissionsJSON []byte) string {
-	input := fmt.Sprintf("bulk-v1:%d:%s:%s", examID, string(submissionsJSON), offlineSalt)
-	h := sha256.Sum256([]byte(input))
-	return hex.EncodeToString(h[:])
-}
-
-// ExportAllSubmissions exports all submissions (with answers) for an exam as a
-// downloadable JSON file. Teachers can re-import this on another setup later.
-// GET /api/exams/:id/export-submissions
-func (h *Handler) ExportAllSubmissions(c *fiber.Ctx) error {
-	teacherID, err := middleware.ExtractTeacherID(c)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	}
-
-	examID, _ := strconv.Atoi(c.Params("id"))
-	if examID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid exam id")
-	}
-
-	var exam models.Exam
-	if err := h.db.Where("id = ? AND teacher_id = ?", examID, teacherID).First(&exam).Error; err != nil {
-		return fiber.NewError(fiber.StatusForbidden, "exam not found or access denied")
-	}
-
-	var submissions []models.Submission
-	h.db.Preload("Answers").Where("exam_id = ?", examID).Order("submitted_at desc").Find(&submissions)
-
-	exported := make([]bulkExportSubmission, 0, len(submissions))
-	for _, s := range submissions {
-		answers := make([]bulkExportAnswer, 0, len(s.Answers))
-		for _, a := range s.Answers {
-			answers = append(answers, bulkExportAnswer{
-				QuestionID: a.QuestionID,
-				Answer:     a.Answer,
-				Score:      a.Score,
-				Feedback:   a.Feedback,
-			})
-		}
-		exported = append(exported, bulkExportSubmission{
-			SessionID:    s.SessionID,
-			SetName:      s.SetName,
-			StudentName:  s.StudentName,
-			StudentEmail: s.StudentEmail,
-			SubmittedAt:  s.SubmittedAt.Format(time.RFC3339),
-			TotalScore:   s.TotalScore,
-			Status:       string(s.Status),
-			Answers:      answers,
-		})
-	}
-
-	subsJSON, _ := json.Marshal(exported)
-	hash := computeBulkHash(uint(examID), subsJSON)
-
-	payload := bulkExportPayload{
-		Version:     1,
-		ExamID:      uint(examID),
-		ExamTitle:   exam.Title,
-		ExportedAt:  time.Now().UTC().Format(time.RFC3339),
-		Submissions: exported,
-		Hash:        hash,
-	}
-
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s_submissions.examdata"`, exam.Title))
-	c.Set("Content-Type", "application/json")
-	return c.JSON(payload)
-}
-
-// ImportAllSubmissions imports a previously-exported bulk submissions file.
-// Skips duplicates (same student_email already has a submission for this exam).
-// POST /api/exams/:id/import-submissions
-func (h *Handler) ImportAllSubmissions(c *fiber.Ctx) error {
-	teacherID, err := middleware.ExtractTeacherID(c)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	}
-
-	examID, _ := strconv.Atoi(c.Params("id"))
-	if examID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid exam id")
-	}
-
-	var exam models.Exam
-	if err := h.db.Where("id = ? AND teacher_id = ?", examID, teacherID).First(&exam).Error; err != nil {
-		return fiber.NewError(fiber.StatusForbidden, "exam not found or access denied")
-	}
-
-	var payload bulkExportPayload
-	if err := c.BodyParser(&payload); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid file format")
-	}
-	if payload.Version != 1 {
-		return fiber.NewError(fiber.StatusBadRequest, "unsupported file version")
-	}
-	if payload.ExamID != uint(examID) {
-		return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf(
-			"file belongs to a different exam (file: %d, current: %d)", payload.ExamID, examID))
-	}
-
-	// Verify hash.
-	subsJSON, _ := json.Marshal(payload.Submissions)
-	expected := computeBulkHash(uint(examID), subsJSON)
-	if expected != payload.Hash {
-		return fiber.NewError(fiber.StatusUnprocessableEntity,
-			"tamper detected: hash mismatch — the file has been modified")
-	}
-
-	// Find existing submissions to skip exact duplicates.
-	// Use session_id + submitted_at as composite key so that:
-	//  - Different submissions from the same student (different timestamps) are imported
-	//  - Re-importing the same file doesn't create duplicates
-	var existing []models.Submission
-	h.db.Where("exam_id = ?", examID).Find(&existing)
-	existingKeys := make(map[string]bool, len(existing))
-	for _, s := range existing {
-		key := s.SessionID + "|" + s.SubmittedAt.Format(time.RFC3339)
-		existingKeys[key] = true
-	}
-
-	imported := 0
-	skipped := 0
-
-	for _, sub := range payload.Submissions {
-		key := sub.SessionID + "|" + sub.SubmittedAt
-		if existingKeys[key] {
-			skipped++
-			continue
-		}
-
-		submittedAt, _ := time.Parse(time.RFC3339, sub.SubmittedAt)
-		if submittedAt.IsZero() {
-			submittedAt = time.Now().UTC()
-		}
-
-		txErr := h.db.Transaction(func(tx *gorm.DB) error {
-			submission := models.Submission{
-				ExamID:       uint(examID),
-				SessionID:    sub.SessionID,
-				StudentName:  sub.StudentName,
-				StudentEmail: sub.StudentEmail,
-				SetName:      sub.SetName,
-				SubmittedAt:  submittedAt,
-				TotalScore:   sub.TotalScore,
-				Status:       models.SubmissionStatus(sub.Status),
-			}
-			if err := tx.Create(&submission).Error; err != nil {
-				return err
-			}
-
-			for _, a := range sub.Answers {
-				if err := tx.Create(&models.SubmissionAnswer{
-					SubmissionID: submission.ID,
-					QuestionID:   a.QuestionID,
-					Answer:       a.Answer,
-					Score:        a.Score,
-					Feedback:     a.Feedback,
-				}).Error; err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if txErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError,
-				fmt.Sprintf("failed to import submission for %s: %v", sub.StudentEmail, txErr))
-		}
-		imported++
-		existingKeys[key] = true
-	}
-
-	return c.JSON(fiber.Map{
-		"imported": imported,
-		"skipped":  skipped,
-		"message":  fmt.Sprintf("%d imported, %d skipped (already exist)", imported, skipped),
-	})
-}

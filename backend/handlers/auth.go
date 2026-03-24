@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/exam-platform/backend/middleware"
@@ -23,6 +25,16 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Login(c *fiber.Ctx) error {
+	ip := c.IP()
+
+	// Check if this IP is currently locked out.
+	if remaining := h.loginLimiter.check(ip); remaining > 0 {
+		mins := int(math.Ceil(remaining.Minutes()))
+		c.Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
+		return fiber.NewError(fiber.StatusTooManyRequests,
+			fmt.Sprintf("too many failed attempts — try again in %d minute(s)", mins))
+	}
+
 	var req loginRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
@@ -31,10 +43,12 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	var teacher models.Teacher
 	if err := h.db.Where("email = ?", req.Email).First(&teacher).Error; err != nil {
 		// Uniform message prevents email enumeration.
+		h.loginLimiter.recordFailure(ip)
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(teacher.HashedPassword), []byte(req.Password)); err != nil {
+		h.loginLimiter.recordFailure(ip)
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
@@ -47,6 +61,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to issue token")
 	}
 
+	h.loginLimiter.recordSuccess(ip)
 	return c.JSON(fiber.Map{"access_token": accessToken, "teacher": teacher})
 }
 

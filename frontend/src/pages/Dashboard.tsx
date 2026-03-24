@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { getExams, deleteExam, Exam } from '../api/client'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { getExams, deleteExam, importWholeExam, Exam } from '../api/client'
 import { useTheme } from '../contexts/ThemeContext'
 
 function formatTimeRemaining(seconds: number): string {
@@ -197,8 +197,12 @@ function ExamCard({ exam, onDelete, isDark }: { exam: Exam; onDelete: () => void
 
 export default function Dashboard() {
   const { isDark } = useTheme()
+  const navigate = useNavigate()
   const [exams, setExams] = useState<Exam[]>([])
   const [loading, setLoading] = useState(true)
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     getExams()
@@ -213,6 +217,28 @@ export default function Dashboard() {
     setExams(prev => prev.filter(e => e.id !== id))
   }
 
+  const handleImportExam = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setImporting(true)
+    setImportMsg(null)
+    try {
+      const raw = await file.text()
+      const payload = JSON.parse(raw)
+      const result = await importWholeExam(payload)
+      setImportMsg({ text: result.message, type: 'success' })
+      // Navigate to the newly imported exam.
+      navigate(`/exams/${result.exam_id}`)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'Import failed — the file may be invalid or tampered.'
+      setImportMsg({ text: msg, type: 'error' })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const text  = isDark ? '#f1f5f9' : '#111827'
   const muted = isDark ? '#94a3b8' : '#6b7280'
 
@@ -225,15 +251,49 @@ export default function Dashboard() {
             {exams.length} exam{exams.length !== 1 ? 's' : ''} total
           </p>
         </div>
-        <Link to="/exams/new">
-          <button style={{
-            padding: '9px 20px', background: '#1a73e8', color: 'white',
-            border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer',
-          }}>
-            + New Exam
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".examfull"
+            style={{ display: 'none' }}
+            onChange={handleImportExam}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            title="Import a previously exported .examfull file to create a new exam"
+            style={{
+              padding: '9px 20px',
+              background: importing ? '#e5e7eb' : (isDark ? '#1e293b' : 'white'),
+              color: importing ? '#9ca3af' : '#1a73e8',
+              border: '1px solid #1a73e8', borderRadius: 6,
+              fontSize: 14, fontWeight: 600,
+              cursor: importing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {importing ? '⏳ Importing…' : '⬆ Import Exam'}
           </button>
-        </Link>
+          <Link to="/exams/new">
+            <button style={{
+              padding: '9px 20px', background: '#1a73e8', color: 'white',
+              border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+            }}>
+              + New Exam
+            </button>
+          </Link>
+        </div>
       </div>
+      {importMsg && (
+        <div style={{
+          padding: '10px 16px', marginBottom: 16, borderRadius: 6, fontSize: 13,
+          background: importMsg.type === 'success' ? (isDark ? '#14532d' : '#f0fdf4') : (isDark ? '#450a0a' : '#fef2f2'),
+          color: importMsg.type === 'success' ? (isDark ? '#86efac' : '#15803d') : (isDark ? '#fca5a5' : '#dc2626'),
+          border: `1px solid ${importMsg.type === 'success' ? (isDark ? '#166534' : '#86efac') : (isDark ? '#7f1d1d' : '#fca5a5')}`,
+        }}>
+          {importMsg.text}
+        </div>
+      )}
 
       {loading && <p style={{ color: muted }}>Loading…</p>}
       {!loading && exams.length === 0 && (

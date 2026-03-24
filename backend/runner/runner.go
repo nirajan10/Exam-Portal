@@ -166,7 +166,7 @@ func (r *Runner) Run(ctx context.Context, lang Language, code string, programStd
 			PidsLimit: pidsLimit(50),     // prevent fork bombs
 		},
 		ReadonlyRootfs: true,                       // immutable root filesystem
-		Tmpfs:          map[string]string{"/tmp": "rw,size=10m"}, // writable scratch space
+		Tmpfs:          map[string]string{"/tmp": "rw,exec,size=10m"}, // writable scratch space (exec needed for compiled binaries)
 		SecurityOpt:    []string{"no-new-privileges"},
 		AutoRemove:     false, // we manage removal in defer for reliability
 	}, nil, nil, "")

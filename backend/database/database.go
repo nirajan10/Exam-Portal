@@ -25,6 +25,7 @@ func Init(dsn string) (*gorm.DB, error) {
 		&models.Submission{},
 		&models.SubmissionAnswer{}, // must come after Submission (FK: submission_id)
 		&models.Feedback{},         // must come after Teacher (FK: teacher_id)
+		&models.AppSettings{},      // single-row platform settings
 	)
 	if err != nil {
 		return nil, err
@@ -43,6 +44,13 @@ func Init(dsn string) (*gorm.DB, error) {
 	// ── Seed ────────────────────────────────────────────────────────────────
 	// Run after migration so the teachers table and role column always exist.
 	seed.EnsureSuperAdmin(db)
+
+	// Ensure the single-row app settings record exists.
+	var settingsCount int64
+	db.Model(&models.AppSettings{}).Count(&settingsCount)
+	if settingsCount == 0 {
+		db.Create(&models.AppSettings{ID: 1, LLMAutoGrader: true})
+	}
 
 	return db, nil
 }

@@ -83,9 +83,17 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Post("/exams/:id/import-offline", h.ImportOfflineSubmission)
 	protected.Post("/submissions/import", h.ImportOfflineAuto)
 
-	// Bulk export / import — download all submissions, re-import on another setup
-	protected.Get("/exams/:id/export-submissions", h.ExportAllSubmissions)
-	protected.Post("/exams/:id/import-submissions", h.ImportAllSubmissions)
+	// Whole-exam export / import — portable file any teacher can import
+	protected.Get("/exams/:id/export", h.ExportWholeExam)
+	protected.Post("/exams/import", h.ImportWholeExam)
+
+	// LLM auto-grading
+	protected.Get("/llm/health", h.GetLLMHealth)
+	protected.Post("/submissions/:id/auto-grade", h.AutoGradeSubmission)
+	protected.Post("/exams/:id/auto-grade-all", h.AutoGradeAllSubmissions)
+
+	// Platform settings (read-only for teachers)
+	protected.Get("/settings", h.GetAppSettings)
 
 	// Code execution sandbox
 	protected.Post("/execute", h.Execute)
@@ -98,6 +106,7 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 		middleware.JWTMiddleware(jwtSecret),
 		middleware.RequireRole("superadmin"),
 	)
+	admin.Patch("/settings", h.UpdateAppSettings)
 	admin.Get("/teachers", h.ListTeachers)
 	admin.Post("/create-teacher", h.CreateTeacher)
 	admin.Patch("/teachers/:id/reset-password", h.ResetTeacherPassword)

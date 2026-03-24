@@ -5,6 +5,7 @@ import {
   getAdminTeachers, createTeacher,
   resetTeacherPassword, setTeacherActive, deleteTeacher, getAdminTeacherExams,
   type CreateTeacherResponse,
+  getAppSettings, updateAppSettings,
 } from '../api/client'
 import { useTheme } from '../contexts/ThemeContext'
 
@@ -419,12 +420,17 @@ export default function AdminStaff() {
   const [toggling, setToggling]       = useState<number | null>(null)
   const [deleting, setDeleting]       = useState<number | null>(null)
   const [search, setSearch]           = useState('')
+  const [llmEnabled, setLlmEnabled]   = useState(true)
+  const [llmToggling, setLlmToggling] = useState(false)
 
   useEffect(() => {
     getAdminTeachers()
       .then(setTeachers)
       .catch(() => setTeachers([]))
       .finally(() => setLoading(false))
+    getAppSettings()
+      .then(s => setLlmEnabled(s.llm_auto_grader))
+      .catch(() => {})
   }, [])
 
   const filtered = useMemo(() => {
@@ -505,6 +511,44 @@ export default function AdminStaff() {
           }}
         >
           + Add Teacher
+        </button>
+      </div>
+
+      {/* ── Platform Settings ────────────────────────────────────────────── */}
+      <div style={{
+        background: cardBg, border: `1px solid ${border}`, borderRadius: 10,
+        padding: '16px 20px', marginBottom: 20,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: text, marginBottom: 2 }}>
+            AI Auto Grader
+          </div>
+          <div style={{ fontSize: 12, color: muted }}>
+            {llmEnabled
+              ? 'Teachers can use the AI auto-grader for theory and code questions.'
+              : 'AI auto-grading is disabled. Teachers will not see the auto-grade buttons.'}
+          </div>
+        </div>
+        <button
+          onClick={async () => {
+            setLlmToggling(true)
+            try {
+              const updated = await updateAppSettings({ llm_auto_grader: !llmEnabled })
+              setLlmEnabled(updated.llm_auto_grader)
+            } catch { /* silent */ }
+            finally { setLlmToggling(false) }
+          }}
+          disabled={llmToggling}
+          style={{
+            padding: '7px 18px', fontSize: 13, fontWeight: 700,
+            background: llmEnabled ? GREEN : (isDark ? '#334155' : '#e5e7eb'),
+            color: llmEnabled ? 'white' : muted,
+            border: 'none', borderRadius: 7, cursor: llmToggling ? 'not-allowed' : 'pointer',
+            minWidth: 100, transition: 'background 0.15s, color 0.15s',
+          }}
+        >
+          {llmToggling ? '...' : llmEnabled ? 'Enabled' : 'Disabled'}
         </button>
       </div>
 

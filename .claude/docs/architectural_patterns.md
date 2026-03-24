@@ -209,6 +209,7 @@ Fullscreen lockdown and violation detection during exams (`pages/StudentExam.tsx
 - **Auto-recovery**: click anywhere re-enters fullscreen during buffer and exam phases
 - **Buffer phase**: fullscreen enforced from join, not just exam start
 - **Violation limit**: configurable per exam; reaching limit triggers auto-submission
+- **Download immunity**: `isDownloadingRef` suppresses violation counting during offline backup save; cleared on focus return, not a fixed timeout — prevents save-dialog-triggered violations
 
 ---
 
@@ -232,3 +233,53 @@ Dark mode via CSS custom properties, not inline color logic:
 - Components use `var(--card-bg)`, `var(--text)`, `var(--border)` etc.
 - `useTheme()` provides `isDark` boolean for cases where inline conditional is needed (e.g., primary button colors)
 - Persisted in localStorage key `exam_theme`
+
+---
+
+## 20. Login Rate Limiting
+
+In-memory per-IP brute-force protection (`handlers/handler.go:31-92`):
+
+- 5 failed attempts → 15-minute lockout per IP
+- `loginLimiter` struct with `sync.Mutex` for thread safety
+- `check(ip)` returns remaining lockout duration; `recordFailure(ip)` increments; `recordSuccess(ip)` clears
+- Returns `429 Too Many Requests` with `Retry-After` header (`handlers/auth.go`)
+- Counter resets after lockout expires, not just on success
+
+---
+
+## 21. Platform Settings (Single-Row AppSettings)
+
+Feature flags stored in a single-row `app_settings` table (`models/settings.go`):
+
+- Row seeded on startup with defaults (`database/database.go:49-53`)
+- `isLLMEnabled()` helper checked at the top of `AutoGradeSubmission` and `AutoGradeAllSubmissions` (`handlers/llm_grader.go`)
+- `GET /settings` (any teacher) reads flags; `PATCH /admin/settings` (superadmin) toggles them
+- Frontend reads settings to conditionally show/hide auto-grade buttons (`ExamView.tsx`, `GradingView.tsx`)
+- Admin toggles via `AdminStaff.tsx` settings card
+
+---
+
+## 22. Offline Submission Remapping
+
+When an exam is deleted and reimported from `.examfull`, offline `.exam` files from the original exam have stale IDs. The import handler remaps them positionally (`handlers/submission.go:remapOfflineQuestionIDs`):
+
+- Detects exam ID mismatch between file and target URL
+- Matches question set by title (falls back to single-set exam)
+- Sorts both old question IDs (from file) and new question IDs (from DB) ascending
+- Maps positionally: old[0] → new[0], old[1] → new[1], etc.
+- Fails fast if question count doesn't match
+
+---
+
+## 23. LLM Grading Architecture
+
+Two-tier grading: synchronous for single submissions, async Celery queue for bulk:
+
+- **Single**: `POST /submissions/:id/auto-grade` → sequential LLM calls with 1 retry (`handlers/llm_grader.go:callLLMGradeWithRetry`)
+- **Bulk**: `POST /exams/:id/auto-grade-all` → submits batch to `/grade/batch`, polls `/grade/status` every 2s until done or 30-min timeout
+- Code questions: sandbox-executed first (`runner.Run`), execution output passed to LLM for informed grading
+- LLM service: FastAPI + llama-cpp-python running Qwen2.5-3B-Instruct GGUF (`llm-service/main.py`)
+- Celery worker: separate model instance, concurrency=1 to prevent OOM (`llm-service/tasks.py`)
+- Score clamped to `[0, maxPoints]` both in LLM service (parse) and Go handler (double-check)
+- `recalcSubmission` updates `total_score` and `status` after grading (`handlers/llm_grader.go:464-488`)

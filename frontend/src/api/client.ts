@@ -303,6 +303,28 @@ export const gradeSubmission = (
 ): Promise<Submission> =>
   api.patch<Submission>(`/submissions/${id}/grade`, { grades }).then(r => r.data)
 
+// ── LLM auto-grading ──────────────────────────────────────────────────────
+
+export interface AutoGradeResult {
+  submission: Submission
+  graded: number
+}
+
+export interface AutoGradeAllResult {
+  submissions_processed: number
+  answers_graded: number
+  message: string
+}
+
+export const getLLMHealth = (): Promise<{ status: string }> =>
+  api.get<{ status: string }>('/llm/health').then(r => r.data)
+
+export const autoGradeSubmission = (submissionId: number): Promise<AutoGradeResult> =>
+  api.post<AutoGradeResult>(`/submissions/${submissionId}/auto-grade`, {}, { timeout: 120_000 }).then(r => r.data)
+
+export const autoGradeAllSubmissions = (examId: number): Promise<AutoGradeAllResult> =>
+  api.post<AutoGradeAllResult>(`/exams/${examId}/auto-grade-all`, {}, { timeout: 600_000 }).then(r => r.data)
+
 // ── Code execution ────────────────────────────────────────────────────────────
 
 export interface RunResult {
@@ -331,15 +353,15 @@ export const importOfflineSubmission = (examId: number, base64Data: string): Pro
 export const importOfflineAuto = (base64Data: string): Promise<Submission> =>
   api.post<Submission>('/submissions/import', { data: base64Data }).then(r => r.data)
 
-// ── Bulk submission export / import ────────────────────────────────────────────
+// ── Whole-exam export / import ─────────────────────────────────────────────────
 
-/** Export all submissions (with answers) for an exam as a JSON blob. */
-export const exportAllSubmissions = (examId: number): Promise<Blob> =>
-  api.get(`/exams/${examId}/export-submissions`, { responseType: 'blob' }).then(r => r.data)
+/** Export the entire exam (metadata, questions, submissions) as a portable JSON file. */
+export const exportWholeExam = (examId: number): Promise<Blob> =>
+  api.get(`/exams/${examId}/export`, { responseType: 'blob' }).then(r => r.data)
 
-/** Import a previously-exported bulk submissions file. */
-export const importAllSubmissions = (examId: number, data: unknown): Promise<{ imported: number; skipped: number; message: string }> =>
-  api.post(`/exams/${examId}/import-submissions`, data).then(r => r.data)
+/** Import a previously-exported .examfull file, creating a new exam. */
+export const importWholeExam = (data: unknown): Promise<{ exam_id: number; message: string }> =>
+  api.post('/exams/import', data).then(r => r.data)
 
 // ── CSV bulk upload ───────────────────────────────────────────────────────────
 
@@ -480,3 +502,15 @@ export const listAllFeedback = (): Promise<Feedback[]> =>
 
 export const deleteFeedback = (id: number): Promise<void> =>
   api.delete(`/admin/feedback/${id}`).then(() => {})
+
+// ── Platform settings ──────────────────────────────────────────────────────
+
+export interface AppSettings {
+  llm_auto_grader: boolean
+}
+
+export const getAppSettings = (): Promise<AppSettings> =>
+  api.get<AppSettings>('/settings').then(r => r.data)
+
+export const updateAppSettings = (payload: Partial<AppSettings>): Promise<AppSettings> =>
+  api.patch<AppSettings>('/admin/settings', payload).then(r => r.data)
