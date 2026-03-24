@@ -17,7 +17,9 @@ A secure online exam platform where teachers create and manage exams with MCQ, M
 - **Offline submission backup** — students download an encrypted backup of their answers; teachers reimport via SHA-256 tamper-checked upload
 - **PIN-protected exams** — optional access code required to join
 - **Teacher feedback** — teachers submit bug reports, suggestions, usability, performance, or general feedback; admins review and manage from a dedicated panel
-- **Dark mode** — system-wide theme toggle via CSS custom properties
+- **AI auto-grading** — local LLM (Qwen2.5-3B-Instruct) grades theory and code answers; single or bulk grading via Celery async queue; toggleable by superadmin
+- **Login brute-force protection** — 5 failed attempts per IP triggers a 15-minute lockout
+- **Dark mode** — system-wide theme toggle via CSS custom properties; all interactive states (MCQ selection, correct-answer badges) adapt to dark backgrounds
 - **Force password change** — admin-created teacher accounts require password change on first login
 
 ## Tech Stack
@@ -32,6 +34,7 @@ A secure online exam platform where teachers create and manage exams with MCQ, M
 | Frontend | React 18, TypeScript 5.4, Vite 5.3, Axios 1.7 |
 | PDF (frontend) | jsPDF 2.5 + jsPDF-autotable 3.8, JSZip 3.10 |
 | Serving | Nginx 1.25-alpine (SPA + reverse proxy) |
+| LLM grading | Python 3.11, FastAPI, llama-cpp-python, Celery + Redis |
 | Orchestration | Docker Compose |
 
 ## Getting Started
@@ -66,6 +69,7 @@ docker compose up --build
 
 - Frontend: http://localhost:9999
 - Backend API: http://localhost:8080
+- LLM Service: http://localhost:8000
 
 On first startup the database schema is created automatically. If `ADMIN_EMAIL` and `ADMIN_PASSWORD` are set in `.env`, a superadmin account is bootstrapped. The superadmin can then create teacher accounts via the admin panel.
 
@@ -81,13 +85,21 @@ backend/
     webrtc.go     WebSocket upgrade middleware for signaling
     mail.go       SMTP settings + report sending + backend PDF fallback
     feedback.go   teacher feedback CRUD
+    llm_grader.go single + bulk AI auto-grading orchestration
+    settings.go   platform-wide feature flag endpoints
   middleware/     JWT validation + role extraction
   models/         GORM structs — source of truth for DB schema
     feedback.go   feedback types: bug, suggestion, usability, performance, other
+    settings.go   single-row AppSettings for feature flags (e.g., LLM toggle)
   routes/         public / JWT-protected / admin route groups
   runner/         Docker sandbox manager (security-sensitive)
   seed/           superadmin bootstrap on startup
   uploads/        profile picture files (served at /uploads)
+
+llm-service/
+  main.py         FastAPI app — /grade (sync), /grade/batch + /grade/status (Celery async)
+  tasks.py        Celery worker — loads own model copy, concurrency=1
+  Dockerfile      Builds llama-cpp-python with CPU support
 
 frontend/src/
   api/client.ts         single Axios instance + all TypeScript interfaces + API helpers
@@ -123,8 +135,8 @@ Full route list in `routes/routes.go`. Three auth levels:
 | Group | Routes |
 |-------|--------|
 | Public | `POST /api/auth/login`, `GET /api/exams/active`, `POST /api/exams/:id/verify-pin`, `POST /api/exams/:id/join`, `POST /api/exams/:id/submit`, `GET /api/exams/:id/public`, `POST /api/exams/:id/execute` |
-| JWT (teacher) | `/api/exams` CRUD, `/api/question-sets` CRUD, `/api/questions` CRUD, `/api/submissions` read/grade/delete/import, `/api/exams/:id/analytics`, `/api/exams/:id/upload-questions`, `/api/reports/send/:id`, `/api/reports/send-all`, `/api/execute`, `/api/me`, `/api/me/profile-pic`, `/api/me/mail-settings`, `/api/feedback` |
-| JWT (superadmin) | `/api/admin/teachers` CRUD + reset-password + activate/deactivate, `/api/admin/feedback` list + delete, `/api/admin/teachers/:id/exams` |
+| JWT (teacher) | `/api/exams` CRUD, `/api/question-sets` CRUD, `/api/questions` CRUD, `/api/submissions` read/grade/delete/import, `/api/exams/:id/analytics`, `/api/exams/:id/upload-questions`, `/api/reports/send/:id`, `/api/reports/send-all`, `/api/execute`, `/api/me`, `/api/me/profile-pic`, `/api/me/mail-settings`, `/api/feedback`, `GET /api/settings`, `/api/llm/health`, `/api/submissions/:id/auto-grade`, `/api/exams/:id/auto-grade-all` |
+| JWT (superadmin) | `/api/admin/teachers` CRUD + reset-password + activate/deactivate, `/api/admin/feedback` list + delete, `/api/admin/teachers/:id/exams`, `PATCH /api/admin/settings` |
 | WebSocket | `/api/ws` — WebRTC signaling + chat for video proctoring rooms |
 
 Student submissions (`POST /api/exams/:id/submit`) require no auth — name + email in body.
@@ -156,6 +168,7 @@ Student submissions (`POST /api/exams/:id/submit`) require no auth — name + em
 | `DOCKER_GID` | GID of the Docker socket group (default: 999) |
 | `ADMIN_EMAIL` | Superadmin email for bootstrap (optional) |
 | `ADMIN_PASSWORD` | Superadmin password for bootstrap (optional) |
+| `LLM_SERVICE_URL` | URL of the LLM grading service (default: `http://llm-service:8000`) |
 
 ## Local Development
 
@@ -190,7 +203,8 @@ docker compose build frontend
 
 ## Security Notes
 
-- Code execution containers: `NetworkMode: none`, 64 MB memory, 50 PID limit, read-only rootfs, `no-new-privileges`, code delivered via stdin (not env vars)
+- Code execution containers: `NetworkMode: none`, 64 MB memory, 50 PID limit, read-only rootfs, `no-new-privileges`, code delivered via stdin (not env vars), tmpfs `/tmp` with `exec` flag for compiled binaries
+- Login rate-limited: 5 failed attempts per IP → 15-minute lockout (in-memory)
 - Correct answers never exposed in public/student-facing API responses
 - Ownership verified via SQL joins before every mutating operation — failures return 404 to avoid leaking resource existence
 - SMTP app passwords encrypted with AES-256-GCM before storage; key derived from `JWT_SECRET`

@@ -77,7 +77,7 @@ All ephemeral code execution containers (`runner/runner.go`) must always have:
 
 - `NetworkMode: "none"` — no network access
 - `Resources.Memory: 64MB`, `Resources.PidsLimit: 50`
-- `ReadonlyRootfs: true` + `Tmpfs: {"/tmp": "rw,size=10m"}`
+- `ReadonlyRootfs: true` + `Tmpfs: {"/tmp": "rw,exec,size=10m"}` — `exec` flag is required so compiled C/C++ binaries in `/tmp` can run
 - `SecurityOpt: ["no-new-privileges"]`
 - Code delivered via **stdin goroutine** — never env vars (visible in `docker inspect`)
 - Cleanup: `defer ContainerRemove(context.Background(), id, Force:true)` — fresh context, not the timeout context
@@ -232,6 +232,7 @@ Dark mode via CSS custom properties, not inline color logic:
 - CSS variables defined in `index.css` under `html` and `html[data-theme='dark']`
 - Components use `var(--card-bg)`, `var(--text)`, `var(--border)` etc.
 - `useTheme()` provides `isDark` boolean for cases where inline conditional is needed (e.g., primary button colors)
+- Inline dark-mode colors use ternary: `isDark ? '#dark' : '#light'` — never hardcode light-only highlight colors (e.g., MCQ selected state, correct-answer badges)
 - Persisted in localStorage key `exam_theme`
 
 ---
