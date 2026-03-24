@@ -83,9 +83,9 @@ func Setup(app *fiber.App, h *handlers.Handler, jwtSecret string) {
 	protected.Post("/exams/:id/import-offline", h.ImportOfflineSubmission)
 	protected.Post("/submissions/import", h.ImportOfflineAuto)
 
-	// Bulk export / import — download all submissions, re-import on another setup
-	protected.Get("/exams/:id/export-submissions", h.ExportAllSubmissions)
-	protected.Post("/exams/:id/import-submissions", h.ImportAllSubmissions)
+	// Whole-exam export / import — portable file any teacher can import
+	protected.Get("/exams/:id/export", h.ExportWholeExam)
+	protected.Post("/exams/import", h.ImportWholeExam)
 
 	// LLM auto-grading
 	protected.Get("/llm/health", h.GetLLMHealth)

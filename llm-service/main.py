@@ -114,6 +114,7 @@ IMPORTANT RULES:
 - Only give 0 marks if the answer is completely wrong or empty.
 - Be fair — do not penalize correct answers.
 - Ignore minor grammatical or spelling errors if the answer is otherwise correct.
+- Expect answers according to the question's max points, and grade proportionally. No need to be extremely precise, just a reasonable estimate.
 
 You MUST respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {"score": <number>, "feedback": "<brief feedback>"}"""
@@ -128,7 +129,7 @@ Maximum Marks: {req.max_points}
 
 Student's Answer: {req.student_answer}
 
-Evaluate correctness, completeness, and clarity. Award partial marks for partially correct answers. Correct the spelling if necessary. A correct answer should get full marks.
+Evaluate correctness, completeness, and clarity. Correct the spelling if necessary. A correct answer should get full marks.
 
 Respond with ONLY: {{"score": <0 to {req.max_points}>, "feedback": "<brief feedback>"}}"""
 
@@ -137,9 +138,11 @@ def build_code_prompt(req: GradeRequest) -> str:
     lang_labels = {"python": "Python 3", "c": "C", "cpp": "C++ 17"}
     lang = lang_labels.get(req.language, req.language or "code")
 
-    prompt = f"""Grade this {lang} coding question.
+    prompt = f"""Grade this coding question.
 
 Question: {req.question_content}
+
+Required Programming Language: {lang}
 
 Maximum Marks: {req.max_points}
 
@@ -162,13 +165,14 @@ Student's Code:
             prompt += "\n"
 
     prompt += f"""Grading criteria:
-1. Does the code solve the problem correctly?
-2. Does it compile/run without errors?
-3. Is the logic sound (not just hardcoded output)?
-4. If code simply prints expected output without computing, give very low marks.
-5. A working correct solution should get full marks.
-6. If the code is partially correct (e.g., correct logic but minor bugs), award partial marks accordingly.
-7. Be little lenient on minor issues if the overall approach is correct.
+1. The question REQUIRES {lang}. If the student wrote code in a different programming language, give 0 marks regardless of correctness.
+2. Does the code solve the problem correctly?
+3. Does it compile/run without errors?
+4. Is the logic sound (not just hardcoded output)?
+5. If code simply prints expected output without computing, give very low marks.
+6. A working correct solution should get full marks.
+7. If the code is partially correct (e.g., correct logic but minor bugs), award partial marks accordingly.
+8. Be lenient on minor issues if the overall approach is correct (cut 0.5 for a small bugs).
 
 Respond with ONLY: {{"score": <0 to {req.max_points}>, "feedback": "<brief feedback>"}}"""
 

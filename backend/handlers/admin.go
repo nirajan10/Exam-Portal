@@ -8,6 +8,7 @@ import (
 	"github.com/exam-platform/backend/models"
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // randPassword generates a cryptographically-random 8-character temporary
@@ -127,7 +128,8 @@ func (h *Handler) SetTeacherActive(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"active": req.Active})
 }
 
-// DeleteTeacher permanently removes a teacher account.
+// DeleteTeacher permanently removes a teacher account and all their exams,
+// question sets, questions, submissions, submission answers, and feedback.
 // DELETE /api/admin/teachers/:id
 func (h *Handler) DeleteTeacher(c *fiber.Ctx) error {
 	tid, err := strconv.Atoi(c.Params("id"))
@@ -135,13 +137,56 @@ func (h *Handler) DeleteTeacher(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid teacher id")
 	}
 
-	result := h.db.Where("id = ? AND role = ?", tid, models.RoleTeacher).
-		Delete(&models.Teacher{})
-	if result.Error != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete teacher")
-	}
-	if result.RowsAffected == 0 {
+	// Verify the teacher exists and is not a superadmin.
+	var teacher models.Teacher
+	if err := h.db.Where("id = ? AND role = ?", tid, models.RoleTeacher).First(&teacher).Error; err != nil {
 		return fiber.NewError(fiber.StatusNotFound, "teacher not found")
+	}
+
+	txErr := h.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Delete submission answers for all exams owned by this teacher.
+		if err := tx.Exec(
+			`DELETE FROM submission_answers WHERE submission_id IN
+			 (SELECT id FROM submissions WHERE exam_id IN
+			  (SELECT id FROM exams WHERE teacher_id = ?))`, tid,
+		).Error; err != nil {
+			return err
+		}
+		// 2. Delete submissions.
+		if err := tx.Exec(
+			`DELETE FROM submissions WHERE exam_id IN
+			 (SELECT id FROM exams WHERE teacher_id = ?)`, tid,
+		).Error; err != nil {
+			return err
+		}
+		// 3. Delete questions.
+		if err := tx.Exec(
+			`DELETE FROM questions WHERE question_set_id IN
+			 (SELECT id FROM question_sets WHERE exam_id IN
+			  (SELECT id FROM exams WHERE teacher_id = ?))`, tid,
+		).Error; err != nil {
+			return err
+		}
+		// 4. Delete question sets.
+		if err := tx.Exec(
+			`DELETE FROM question_sets WHERE exam_id IN
+			 (SELECT id FROM exams WHERE teacher_id = ?)`, tid,
+		).Error; err != nil {
+			return err
+		}
+		// 5. Delete exams.
+		if err := tx.Where("teacher_id = ?", tid).Delete(&models.Exam{}).Error; err != nil {
+			return err
+		}
+		// 6. Delete feedback.
+		if err := tx.Where("teacher_id = ?", tid).Delete(&models.Feedback{}).Error; err != nil {
+			return err
+		}
+		// 7. Delete the teacher.
+		return tx.Delete(&teacher).Error
+	})
+	if txErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete teacher")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }

@@ -4,7 +4,7 @@ import {
   getExam, createQuestionSet, deleteQuestionSet, duplicateQuestionSet,
   createQuestion, deleteQuestion, updateQuestion,
   getSubmissions, getSubmission, deleteSubmission, uploadQuestions, toggleExamStatus, importOfflineAuto,
-  exportAllSubmissions, importAllSubmissions, autoGradeAllSubmissions,
+  exportWholeExam, autoGradeAllSubmissions,
   getMailSettings, sendReport, sendAllReports,
   UploadResult, Exam, Question, QuestionSet, Submission,
 } from '../api/client'
@@ -923,7 +923,7 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' }
 
 export default function ExamView() {
   const { id } = useParams<{ id: string }>()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { isDark } = useTheme()
   const [exam, setExam] = useState<Exam | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
@@ -931,8 +931,17 @@ export default function ExamView() {
   const SUB_PER_PAGE = 10
   const [newSetTitle, setNewSetTitle] = useState('')
   const [addingSetTo, setAddingSetTo] = useState<number | null>(null)
-  const initialTab = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
-  const [activeTab, setActiveTab] = useState<'questions' | 'submissions' | 'analytics'>(initialTab)
+  const tabParam = (searchParams.get('tab') as 'questions' | 'submissions' | 'analytics') || 'questions'
+  const [activeTab, setActiveTabRaw] = useState<'questions' | 'submissions' | 'analytics'>(tabParam)
+
+  // Keep the URL ?tab= param in sync so browser back/forward preserves the active tab.
+  const setActiveTab = (tab: 'questions' | 'submissions' | 'analytics') => {
+    setActiveTabRaw(tab)
+    setSearchParams(tab === 'questions' ? {} : { tab }, { replace: true })
+  }
+
+  // Sync tab state when the URL search param changes (e.g. navigating back from grading view).
+  useEffect(() => { setActiveTabRaw(tabParam) }, [tabParam])
   const [uploadStates, setUploadStates] = useState<Record<number, SetUploadState>>({})
   const [collapsedSets, setCollapsedSets] = useState<Set<number>>(new Set())
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
@@ -955,10 +964,8 @@ export default function ExamView() {
   const offlineInputRef = useRef<HTMLInputElement>(null)
   const [importingOffline, setImportingOffline] = useState(false)
 
-  // Bulk export / import state
-  const bulkInputRef = useRef<HTMLInputElement>(null)
+  // Whole-exam export state
   const [exporting, setExporting] = useState(false)
-  const [bulkImporting, setBulkImporting] = useState(false)
 
   // AI auto-grade state
   const [aiGradingAll, setAiGradingAll] = useState(false)
@@ -1001,46 +1008,24 @@ export default function ExamView() {
     }
   }
 
-  const handleExportAll = async () => {
+  const handleExportExam = async () => {
     if (!exam) return
     setExporting(true)
     try {
-      const blob = await exportAllSubmissions(exam.id)
+      const blob = await exportWholeExam(exam.id)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${exam.title}_submissions.examdata`
+      a.download = `${exam.title}.examfull`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      showToast(`Exported ${submissions.length} submission(s)`, 'success')
+      showToast('Exam exported successfully', 'success')
     } catch {
-      showToast('Failed to export submissions.', 'error')
+      showToast('Failed to export exam.', 'error')
     } finally {
       setExporting(false)
-    }
-  }
-
-  const handleBulkImport = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !exam) return
-    e.target.value = ''
-    setBulkImporting(true)
-    try {
-      const raw = await file.text()
-      const payload = JSON.parse(raw)
-      const result = await importAllSubmissions(exam.id, payload)
-      showToast(result.message, 'success')
-      // Reload submissions list.
-      getSubmissions(exam.id).then(setSubmissions).catch(() => {})
-      setSubPage(1)
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'Import failed — the file may be invalid or tampered.'
-      showToast(msg, 'error')
-    } finally {
-      setBulkImporting(false)
     }
   }
 
@@ -1398,6 +1383,17 @@ export default function ExamView() {
           >
             {togglingStatus ? '…' : exam.is_active ? 'Stop Exam' : 'Start Exam'}
           </button>
+          <button
+            onClick={handleExportExam}
+            disabled={exporting}
+            title="Download this exam (questions, submissions, settings) as a portable file"
+            style={{
+              ...btn('outline'),
+              opacity: exporting ? 0.6 : 1,
+            }}
+          >
+            {exporting ? '⏳ Exporting…' : '⬇ Export Exam'}
+          </button>
           {!exam.is_active ? (
             <Link to={`/exams/${exam.id}/edit`}>
               <button style={{ ...btn('outline') }}>Edit Settings</button>
@@ -1707,20 +1703,13 @@ export default function ExamView() {
       {/* ── Submissions tab ────────────────────────────────────────────────── */}
       {activeTab === 'submissions' && (
         <div>
-          {/* Hidden file inputs */}
+          {/* Hidden file input */}
           <input
             ref={offlineInputRef}
             type="file"
             accept=".exambackup"
             style={{ display: 'none' }}
             onChange={handleImportOffline}
-          />
-          <input
-            ref={bulkInputRef}
-            type="file"
-            accept=".examdata"
-            style={{ display: 'none' }}
-            onChange={handleBulkImport}
           />
 
           {/* Toolbar row */}
@@ -1754,11 +1743,13 @@ export default function ExamView() {
                 try {
                   const result = await autoGradeAllSubmissions(Number(id))
                   setToast({ message: result.message, type: 'success' })
-                  const fresh = await getSubmissions(Number(id))
-                  setSubmissions(fresh)
                 } catch {
-                  setToast({ message: 'AI grading failed. Is the LLM service running?', type: 'error' })
+                  setToast({ message: 'AI grading may still be running in the background. Refreshing submissions…', type: 'error' })
                 } finally {
+                  try {
+                    const fresh = await getSubmissions(Number(id))
+                    setSubmissions(fresh)
+                  } catch { /* ignore */ }
                   setAiGradingAll(false)
                 }
               }}
@@ -1774,40 +1765,6 @@ export default function ExamView() {
               }}
             >
               {aiGradingAll ? '⏳ AI Grading…' : '🤖 AI Grade All'}
-            </button>
-
-            {/* Download All Submissions */}
-            <button
-              onClick={handleExportAll}
-              disabled={exporting || submissions.length === 0}
-              title="Download all submissions as a single file for offline grading"
-              style={{
-                padding: '7px 16px', fontSize: 13, fontWeight: 600,
-                background: exporting || submissions.length === 0 ? '#e5e7eb' : '#1a73e8',
-                color: exporting || submissions.length === 0 ? '#9ca3af' : 'white',
-                border: 'none', borderRadius: 7,
-                cursor: exporting || submissions.length === 0 ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {exporting ? '⏳ Exporting…' : '⬇ Download All'}
-            </button>
-
-            {/* Upload All Submissions */}
-            <button
-              onClick={() => bulkInputRef.current?.click()}
-              disabled={bulkImporting}
-              title="Upload a previously exported .examdata file to restore submissions"
-              style={{
-                padding: '7px 16px', fontSize: 13, fontWeight: 600,
-                background: bulkImporting ? '#e5e7eb' : '#6d28d9',
-                color: bulkImporting ? '#9ca3af' : 'white',
-                border: 'none', borderRadius: 7,
-                cursor: bulkImporting ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {bulkImporting ? '⏳ Importing…' : '⬆ Upload Batch'}
             </button>
 
             <button
