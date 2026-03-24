@@ -713,14 +713,9 @@ Dual-storage strategy for the JWT:
 
 ### Missing Features
 
-- **Real-time grading notifications** — Students don't know when their exam has been graded (no push notification or polling mechanism)
-- **Question bank / reuse** — No way to share questions across exams; teachers must recreate or duplicate entire sets
-- **Partial code grading** — Code questions require manual grading; automated test-case execution could score them
 - **TURN server for WebRTC** — Only STUN servers configured (Google public); symmetric NAT environments may fail to connect without a TURN relay
 - **Rate limiting** — No request rate limiting on public endpoints (login, join, submit); vulnerable to brute force
 - **Audit logging** — No record of teacher actions (exam edits, grade changes, deletions)
-- **Export results** — No CSV/Excel export for submission data
-- **Email verification** — Student emails are self-reported and unverified
 
 ### Potential Optimizations
 
