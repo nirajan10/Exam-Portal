@@ -1860,10 +1860,18 @@ export default function ExamView() {
                     <td style={{ padding: '10px 12px' }}>
                       <span style={{
                         fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 9999,
-                        background: s.status === 'graded' ? '#dcfce7' : '#fef3c7',
-                        color: s.status === 'graded' ? '#15803d' : '#92400e',
+                        background: s.status === 'graded'
+                          ? s.graded_by === 'ai' ? '#ede9fe' : s.graded_by === 'both' ? '#e0f2fe' : '#dcfce7'
+                          : '#fef3c7',
+                        color: s.status === 'graded'
+                          ? s.graded_by === 'ai' ? '#6d28d9' : s.graded_by === 'both' ? '#0369a1' : '#15803d'
+                          : '#92400e',
                       }}>
-                        {s.status === 'graded' ? 'Graded' : 'Pending'}
+                        {s.status !== 'graded' ? 'Pending'
+                          : s.graded_by === 'ai' ? 'Graded by AI'
+                          : s.graded_by === 'both' ? 'Graded by Both'
+                          : s.graded_by === 'human' ? 'Graded by Human'
+                          : 'Graded'}
                       </span>
                     </td>
                     <td style={{ padding: '10px 12px', color: mutedText, fontSize: 13 }}>

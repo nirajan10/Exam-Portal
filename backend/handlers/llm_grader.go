@@ -480,9 +480,17 @@ func (h *Handler) recalcSubmission(submissionID int) {
 		status = models.SubmissionStatusGraded
 	}
 
+	var existing models.Submission
+	h.db.Select("graded_by").First(&existing, submissionID)
+	gradedBy := models.GradedByAI
+	if existing.GradedBy == models.GradedByHuman {
+		gradedBy = models.GradedByBoth
+	}
+
 	h.db.Model(&models.Submission{}).Where("id = ?", submissionID).
 		Updates(map[string]interface{}{
 			"total_score": total,
 			"status":      string(status),
+			"graded_by":   string(gradedBy),
 		})
 }

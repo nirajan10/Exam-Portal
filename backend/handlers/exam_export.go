@@ -32,6 +32,7 @@ type exportSubmission struct {
 	SubmittedAt   string         `json:"submitted_at"`
 	TotalScore    float64        `json:"total_score"`
 	Status        string         `json:"status"`
+	GradedBy      string         `json:"graded_by"`
 	Answers       []exportAnswer `json:"answers"`
 }
 
@@ -155,6 +156,7 @@ func (h *Handler) ExportWholeExam(c *fiber.Ctx) error {
 			SubmittedAt:  s.SubmittedAt.Format(time.RFC3339),
 			TotalScore:   s.TotalScore,
 			Status:       string(s.Status),
+			GradedBy:     string(s.GradedBy),
 			Answers:      answers,
 		})
 	}
@@ -291,6 +293,7 @@ func (h *Handler) ImportWholeExam(c *fiber.Ctx) error {
 				SubmittedAt:  submittedAt,
 				TotalScore:   sub.TotalScore,
 				Status:       models.SubmissionStatus(sub.Status),
+				GradedBy:     models.GradedBy(sub.GradedBy),
 			}
 			if err := tx.Create(&submission).Error; err != nil {
 				return fmt.Errorf("create submission for %s: %w", sub.StudentEmail, err)

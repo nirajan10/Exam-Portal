@@ -363,9 +363,14 @@ func (h *Handler) GradeSubmission(c *fiber.Ctx) error {
 		if allGraded {
 			status = models.SubmissionStatusGraded
 		}
+		gradedBy := models.GradedByHuman
+		if submission.GradedBy == models.GradedByAI {
+			gradedBy = models.GradedByBoth
+		}
 		return tx.Model(&submission).Updates(map[string]interface{}{
 			"total_score": total,
 			"status":      string(status),
+			"graded_by":   string(gradedBy),
 		}).Error
 	})
 
