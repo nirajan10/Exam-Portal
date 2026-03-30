@@ -27,11 +27,13 @@ function buildQMap(exam: Exam): Map<number, QInfo> {
   return map
 }
 
-function computeMaxScore(exam: Exam): number {
+function computeMaxScore(exam: Exam, questionSetId?: number): number {
   const sets = exam.question_sets ?? []
   if (sets.length === 0) return 0
-  const sorted = [...sets].sort((a, b) => a.order - b.order)
-  return (sorted[0].questions ?? []).reduce((sum, q) => sum + q.points, 0)
+  // Use the student's assigned set when available; fall back to the first set.
+  const target = (questionSetId ? sets.find(s => s.id === questionSetId) : null)
+    ?? [...sets].sort((a, b) => a.order - b.order)[0]
+  return (target.questions ?? []).reduce((sum, q) => sum + q.points, 0)
 }
 
 function drawBar(doc: jsPDF, x: number, y: number, w: number, h: number, pct: number, color: RGB) {
@@ -54,7 +56,7 @@ export async function generateStudentPDF(exam: Exam, submission: Submission): Pr
   let y = 0
 
   const qMap = buildQMap(exam)
-  const maxScore = computeMaxScore(exam)
+  const maxScore = computeMaxScore(exam, submission.question_set_id)
   const answers = submission.answers ?? []
   const pct = maxScore > 0 ? Math.round((submission.total_score / maxScore) * 100) : 0
   const scoreColor: RGB = pct >= 70 ? GREEN : pct >= 41 ? AMBER : RED
@@ -116,7 +118,7 @@ export async function generateStudentPDF(exam: Exam, submission: Submission): Pr
     { label: 'TOTAL SCORE', value: `${submission.total_score}/${maxScore}`, sub: `${pct}%`,             color: scoreColor },
     { label: 'MCQ / MRQ',   value: String(mcqScore),    sub: mcqMax   > 0 ? `of ${mcqMax}`   : 'none', color: BLUE      },
     { label: 'CODE',         value: String(codeScore),   sub: codeMax  > 0 ? `of ${codeMax}`  : 'none', color: PURPLE    },
-    { label: 'STATUS',       value: submission.status === 'graded' ? 'Graded' : 'Pending', sub: '',     color: submission.status === 'graded' ? GREEN : AMBER },
+    { label: 'THEORY',       value: String(theoryScore), sub: theoryMax > 0 ? `of ${theoryMax}` : 'none', color: AMBER },
   ]
   const cw = (CW - 4.5) / 4
   for (let i = 0; i < cards.length; i++) {
