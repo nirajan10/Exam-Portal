@@ -1037,6 +1037,13 @@ export default function ExamView() {
 
   useEffect(reload, [id])
 
+  // Collapse all question sets by default once the exam loads.
+  useEffect(() => {
+    if (exam?.question_sets?.length) {
+      setCollapsedSets(new Set(exam.question_sets.map(qs => qs.id)))
+    }
+  }, [exam?.question_sets?.length])
+
   // Check whether the teacher has configured SMTP credentials.
   // Used to enable/disable the Send Report buttons.
   useEffect(() => {
