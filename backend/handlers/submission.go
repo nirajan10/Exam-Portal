@@ -429,6 +429,8 @@ type questionStat struct {
 	QuestionID      uint    `json:"question_id"`
 	QuestionContent string  `json:"question_content"`
 	QuestionType    string  `json:"question_type"`
+	QuestionSetID   uint    `json:"question_set_id"`
+	SetName         string  `json:"set_name"`
 	CorrectCount    int     `json:"correct_count"`
 	TotalAttempts   int     `json:"total_attempts"`
 	MaxPoints       int     `json:"max_points"`
@@ -576,7 +578,9 @@ func (h *Handler) GetExamAnalytics(c *fiber.Ctx) error {
 	// Build ordered question stats (preserve set → question order).
 	var qStats []questionStat
 	for _, qs := range exam.QuestionSets {
-		for _, q := range qs.Questions {
+		questions := qs.Questions
+		sort.Slice(questions, func(i, j int) bool { return questions[i].ID < questions[j].ID })
+		for _, q := range questions {
 			if q.Type != models.QuestionTypeMCQ && q.Type != models.QuestionTypeMRQ {
 				continue
 			}
@@ -584,6 +588,8 @@ func (h *Handler) GetExamAnalytics(c *fiber.Ctx) error {
 				QuestionID:      q.ID,
 				QuestionContent: q.Content,
 				QuestionType:    string(q.Type),
+				QuestionSetID:   qs.ID,
+				SetName:         qs.Title,
 				MaxPoints:       q.Points,
 			}
 			if agg := aggMap[q.ID]; agg != nil {

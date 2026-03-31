@@ -415,6 +415,8 @@ export interface QuestionStat {
   question_id: number
   question_content: string
   question_type: string
+  question_set_id: number
+  set_name: string
   correct_count: number
   total_attempts: number
   max_points: number

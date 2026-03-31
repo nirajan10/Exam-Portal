@@ -160,60 +160,119 @@ function ScoreDistChart({ buckets, isDark }: {
   )
 }
 
-// ── Question Performance BarChart (horizontal) ─────────────────────────────────
+// ── Question Performance — grouped by set, click-to-expand ────────────────────
 
 function QuestionPerfChart({ questionStats, isDark }: {
   questionStats: QuestionStat[]
   isDark: boolean
 }) {
-  const data = useMemo(() => {
-    const autoGraded = questionStats.filter(qs => qs.question_type === 'MCQ' || qs.question_type === 'MRQ')
-    return autoGraded.map((qs, idx) => {
-      const pct = qs.total_attempts > 0 ? Math.round((qs.correct_count / qs.total_attempts) * 100) : 0
-      return {
-        name: `Q${idx + 1}`,
-        label: truncate(qs.question_content, 60),
-        pct,
-        fill: pct >= 70 ? C.green : pct >= 40 ? C.amber : C.red,
-      }
-    })
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+
+  // MCQ/MRQ only, grouped by set preserving backend order
+  const { setOrder, bySet } = useMemo(() => {
+    const order: string[] = []
+    const groups: Record<string, QuestionStat[]> = {}
+    for (const qs of questionStats) {
+      if (qs.question_type !== 'MCQ' && qs.question_type !== 'MRQ') continue
+      const key = qs.set_name || 'Default'
+      if (!groups[key]) { groups[key] = []; order.push(key) }
+      groups[key].push(qs)
+    }
+    return { setOrder: order, bySet: groups }
   }, [questionStats])
 
-  const axisColor = isDark ? '#94a3b8' : '#6b7280'
-  const gridColor = isDark ? '#334155' : '#e5e7eb'
+  const border   = isDark ? '#334155' : '#e5e7eb'
+  const setCardBg = isDark ? '#0f172a' : '#f8fafc'
+  const textMain = isDark ? '#e2e8f0' : '#1e293b'
+  const textMut  = isDark ? '#94a3b8' : '#6b7280'
 
-  if (data.length === 0) return (
-    <div style={{ padding: '32px 0', textAlign: 'center', color: isDark ? '#64748b' : '#9ca3af', fontSize: 14 }}>
+  if (setOrder.length === 0) return (
+    <div style={{ padding: '32px 0', textAlign: 'center', color: textMut, fontSize: 14 }}>
       No auto-graded questions to display.
     </div>
   )
 
-  const chartH = Math.max(200, data.length * 38 + 40)
-
+  // Each set becomes its own card; cards flow side-by-side in a responsive grid
   return (
-    <ResponsiveContainer width="100%" height={chartH}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 40, bottom: 4, left: 36 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
-        <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`}
-          tick={{ fill: axisColor, fontSize: 12 }} />
-        <YAxis type="category" dataKey="name" tick={{ fill: axisColor, fontSize: 12 }} width={32} />
-        <Tooltip
-          contentStyle={{
-            background: isDark ? '#1e293b' : 'white',
-            border: `1px solid ${isDark ? '#334155' : '#e5e7eb'}`,
-            borderRadius: 8, color: isDark ? '#f1f5f9' : '#111827',
-            maxWidth: 300,
-          }}
-          formatter={(v: number, _: unknown, props: { payload?: { label?: string } }) => [
-            `${v}% correct`,
-            props?.payload?.label ?? '',
-          ]}
-        />
-        <Bar dataKey="pct" radius={[0, 5, 5, 0]}>
-          {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+      gap: 14,
+    }}>
+      {setOrder.map(setName => (
+        <div key={setName} style={{
+          background: setCardBg,
+          border: `1px solid ${border}`,
+          borderRadius: 10,
+          padding: '14px 16px',
+        }}>
+          {/* Set name header — always shown so cards are self-labelled */}
+          <div style={{
+            fontSize: 11, fontWeight: 700, color: C.purple,
+            textTransform: 'uppercase', letterSpacing: '0.5px',
+            paddingBottom: 10, marginBottom: 10,
+            borderBottom: `1px solid ${border}`,
+          }}>
+            {setName}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {bySet[setName].map((qs, idx) => {
+              const pct = qs.total_attempts > 0
+                ? Math.round((qs.correct_count / qs.total_attempts) * 100) : 0
+              const barColor = pct >= 70 ? C.green : pct >= 40 ? C.amber : C.red
+              const isExpanded = expandedId === qs.question_id
+              return (
+                <div key={qs.question_id}>
+                  <div
+                    onClick={() => setExpandedId(isExpanded ? null : qs.question_id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+                      border: `1px solid ${isExpanded ? barColor : border}`,
+                      background: isExpanded
+                        ? (isDark ? '#1e293b' : '#f1f5f9') : 'transparent',
+                      transition: 'border-color 0.15s, background 0.15s',
+                    }}
+                  >
+                    <span style={{ fontSize: 11, fontWeight: 700, color: textMut,
+                      minWidth: 26, flexShrink: 0 }}>
+                      Q{idx + 1}
+                    </span>
+                    <div style={{ flex: 1, height: 8, borderRadius: 4,
+                      background: isDark ? '#334155' : '#e5e7eb', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${pct}%`, height: '100%', borderRadius: 4,
+                        background: barColor, transition: 'width 0.4s',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: barColor,
+                      minWidth: 38, textAlign: 'right', flexShrink: 0 }}>
+                      {pct}%
+                    </span>
+                    <span style={{ fontSize: 11, color: textMut,
+                      minWidth: 48, textAlign: 'right', flexShrink: 0 }}>
+                      {qs.correct_count}/{qs.total_attempts}
+                    </span>
+                  </div>
+                  {isExpanded && (
+                    <div style={{
+                      margin: '3px 0 3px 36px', padding: '10px 14px',
+                      background: isDark ? '#1e293b' : 'white',
+                      border: `1px solid ${border}`, borderRadius: 6,
+                      fontSize: 13, color: textMain, lineHeight: 1.6,
+                      whiteSpace: 'pre-wrap',
+                    }}>
+                      {qs.question_content}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -801,10 +860,10 @@ export default function ResultsAnalytics({ exam, submissions, examId }: Props) {
       </div>
 
       {/* ── Class-wide charts ────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 32 }}>
+      <div style={{ marginBottom: 32 }}>
 
-        {/* Score Distribution */}
-        <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: '20px 24px' }}>
+        {/* Score Distribution — full width, always compact */}
+        <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
           <SectionHeading>Score Distribution</SectionHeading>
           <div style={{ fontSize: 12, color: textMut, marginBottom: 12 }}>
             Students by score bracket (out of {maxScore} pts)
@@ -823,7 +882,7 @@ export default function ResultsAnalytics({ exam, submissions, examId }: Props) {
           )}
         </div>
 
-        {/* Question Performance — uses API data */}
+        {/* Question Performance — one card per set, displayed side by side */}
         <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: '20px 24px' }}>
           <SectionHeading>Question Performance (Auto-Graded)</SectionHeading>
           {analytics ? (
