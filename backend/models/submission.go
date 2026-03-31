@@ -10,6 +10,16 @@ const (
 	SubmissionStatusPendingGrading SubmissionStatus = "pending_grading"
 )
 
+// GradedBy tracks who performed the grading.
+type GradedBy string
+
+const (
+	GradedByNone  GradedBy = ""
+	GradedByHuman GradedBy = "human"
+	GradedByAI    GradedBy = "ai"
+	GradedByBoth  GradedBy = "both"
+)
+
 // Submission represents one student's complete exam attempt.
 // One row is created per student per exam when they click "Submit Exam".
 // MCQ/MRQ questions are auto-graded immediately; theory/code require manual grading.
@@ -28,6 +38,8 @@ type Submission struct {
 	SubmittedAt  time.Time        `                                                json:"submitted_at"`
 	TotalScore   float64          `gorm:"default:0"                                json:"total_score"`
 	Status       SubmissionStatus `gorm:"type:varchar(20);default:'pending_grading'" json:"status"`
+	// GradedBy tracks whether grading was done by human, ai, or both.
+	GradedBy GradedBy `gorm:"type:varchar(10);default:''" json:"graded_by"`
 	// NotifiedAt is set when the teacher successfully emails the student's report.
 	// nil means no report email has been sent yet.
 	NotifiedAt *time.Time `json:"notified_at"`

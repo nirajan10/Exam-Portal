@@ -56,6 +56,22 @@ func (h *Handler) JoinExam(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "this exam is not currently open")
 	}
 
+	// Reject if this email already has a submission for the current exam session.
+	// We scope the check to submitted_at >= started_at so that reactivating the
+	// exam (which resets started_at) does not block students from a prior run.
+	var existingCount int64
+	q := h.db.Model(&models.Submission{}).
+		Where("exam_id = ? AND student_email = ?", examID, req.StudentEmail)
+	if exam.StartedAt != nil {
+		q = q.Where("submitted_at >= ?", exam.StartedAt)
+	}
+	if err := q.Count(&existingCount).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to verify student eligibility")
+	}
+	if existingCount > 0 {
+		return fiber.NewError(fiber.StatusConflict, "You have already submitted this exam.")
+	}
+
 	// Reject if the exam has already concluded (past examEnd).
 	if exam.StartedAt != nil {
 		bufferDur := time.Duration(exam.BufferDurationMins) * time.Minute

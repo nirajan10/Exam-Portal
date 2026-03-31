@@ -274,9 +274,16 @@ function MailSettingsTab() {
 
       {/* Status messages */}
       {saveStatus && (
-        <p style={{ margin: '12px 0 0', fontSize: 13, color: saveStatus.ok ? '#15803d' : '#dc2626' }}>
-          {saveStatus.ok ? '✓ ' : '✗ '}{saveStatus.msg}
-        </p>
+        <div style={{
+          margin: '12px 0 0', padding: '10px 12px', borderRadius: 6, fontSize: 13,
+          background: saveStatus.ok ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${saveStatus.ok ? '#bbf7d0' : '#fecaca'}`,
+          color: saveStatus.ok ? '#15803d' : '#dc2626',
+          display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+          <span>{saveStatus.ok ? '✓' : '✗'}</span>
+          <span>{saveStatus.msg}{saveStatus.ok ? ' — click ← Back to return.' : ''}</span>
+        </div>
       )}
       {testStatus && (
         <p style={{ margin: '8px 0 0', fontSize: 13, color: testStatus.ok ? '#15803d' : '#dc2626' }}>
@@ -374,7 +381,7 @@ export default function ProfileModal({ teacher, onUpdated, onClose }: Props) {
           )}
         </div>
 
-        {/* Close */}
+        {/* Back */}
         <div style={{ padding: '0 24px 20px' }}>
           <button
             onClick={onClose}
@@ -383,9 +390,10 @@ export default function ProfileModal({ teacher, onUpdated, onClose }: Props) {
               background: 'white', color: '#374151',
               border: '1px solid #d1d5db', borderRadius: 6,
               fontSize: 14, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             }}
           >
-            Close
+            ← Back
           </button>
         </div>
       </div>

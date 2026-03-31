@@ -204,8 +204,6 @@ func (h *Handler) SubmitExam(c *fiber.Ctx) error {
 				continue
 			}
 			q, exists := questionMap[a.QuestionID]
-			// An empty string or empty JSON array means the student didn't answer.
-			unanswered := a.Answer == "" || a.Answer == "[]"
 			var score *float64
 			if exists {
 				switch q.Type {
@@ -215,14 +213,8 @@ func (h *Handler) SubmitExam(c *fiber.Ctx) error {
 					score = &s
 					totalScore += s
 				default:
-					if unanswered {
-						// Nothing to manually grade — award 0 automatically.
-						zero := 0.0
-						score = &zero
-					} else {
-						// theory/code with content: requires manual grading.
-						hasPending = true
-					}
+					// theory/code always requires teacher review, even if blank.
+					hasPending = true
 				}
 			}
 			ans := models.SubmissionAnswer{
@@ -272,7 +264,7 @@ func (h *Handler) ListSubmissions(c *fiber.Ctx) error {
 	}
 
 	var submissions []models.Submission
-	h.db.Where("exam_id = ?", examID).Order("submitted_at desc").Find(&submissions)
+	h.db.Where("exam_id = ?", examID).Order("LOWER(student_name) ASC").Find(&submissions)
 	return c.JSON(submissions)
 }
 
@@ -363,9 +355,14 @@ func (h *Handler) GradeSubmission(c *fiber.Ctx) error {
 		if allGraded {
 			status = models.SubmissionStatusGraded
 		}
+		gradedBy := models.GradedByHuman
+		if submission.GradedBy == models.GradedByAI {
+			gradedBy = models.GradedByBoth
+		}
 		return tx.Model(&submission).Updates(map[string]interface{}{
 			"total_score": total,
 			"status":      string(status),
+			"graded_by":   string(gradedBy),
 		}).Error
 	})
 
@@ -432,6 +429,8 @@ type questionStat struct {
 	QuestionID      uint    `json:"question_id"`
 	QuestionContent string  `json:"question_content"`
 	QuestionType    string  `json:"question_type"`
+	QuestionSetID   uint    `json:"question_set_id"`
+	SetName         string  `json:"set_name"`
 	CorrectCount    int     `json:"correct_count"`
 	TotalAttempts   int     `json:"total_attempts"`
 	MaxPoints       int     `json:"max_points"`
@@ -579,7 +578,9 @@ func (h *Handler) GetExamAnalytics(c *fiber.Ctx) error {
 	// Build ordered question stats (preserve set → question order).
 	var qStats []questionStat
 	for _, qs := range exam.QuestionSets {
-		for _, q := range qs.Questions {
+		questions := qs.Questions
+		sort.Slice(questions, func(i, j int) bool { return questions[i].ID < questions[j].ID })
+		for _, q := range questions {
 			if q.Type != models.QuestionTypeMCQ && q.Type != models.QuestionTypeMRQ {
 				continue
 			}
@@ -587,6 +588,8 @@ func (h *Handler) GetExamAnalytics(c *fiber.Ctx) error {
 				QuestionID:      q.ID,
 				QuestionContent: q.Content,
 				QuestionType:    string(q.Type),
+				QuestionSetID:   qs.ID,
+				SetName:         qs.Title,
 				MaxPoints:       q.Points,
 			}
 			if agg := aggMap[q.ID]; agg != nil {
@@ -734,7 +737,6 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 				continue
 			}
 			q, exists := questionMap[a.QuestionID]
-			unanswered := a.Answer == "" || a.Answer == "[]"
 			var score *float64
 			if exists {
 				switch q.Type {
@@ -743,12 +745,8 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 					score = &s
 					totalScore += s
 				default:
-					if unanswered {
-						zero := 0.0
-						score = &zero
-					} else {
-						hasPending = true
-					}
+					// theory/code always requires teacher review, even if blank.
+					hasPending = true
 				}
 			}
 			if err := tx.Create(&models.SubmissionAnswer{

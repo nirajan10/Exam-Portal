@@ -146,7 +146,7 @@ function renderStudentAnswer(answer: SubmissionAnswer, question: Question | unde
     <p style={{
       margin: 0, fontSize: 14, color: 'var(--text)', lineHeight: 1.55,
       background: 'var(--card-bg2)', padding: '10px 12px', borderRadius: 6, minHeight: 48,
-      border: '1px solid var(--border)',
+      border: '1px solid var(--border)', whiteSpace: 'pre-wrap',
     }}>
       {text}
     </p>
@@ -391,7 +391,7 @@ function AnswerCard({ answer, question, grade, scoreError, onChange, isDark = fa
             letterSpacing: '0.5px', marginBottom: 6 }}>
             Question
           </div>
-          <p style={{ margin: 0, fontSize: 14, color: isDark ? '#e2e8f0' : '#1e293b', lineHeight: 1.55 }}>
+          <p style={{ margin: 0, fontSize: 14, color: isDark ? '#e2e8f0' : '#1e293b', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
             {question?.content ?? `Question #${answer.question_id}`}
           </p>
           {isAutoGraded && question?.correct_answers && (

@@ -225,6 +225,8 @@ export interface Submission {
   submitted_at: string
   total_score: number
   status: 'graded' | 'pending_grading'
+  /** Tracks who performed the grading: human, ai, both, or empty if ungraded. */
+  graded_by: '' | 'human' | 'ai' | 'both'
   /** ISO timestamp of when the student's report email was sent; null if not yet sent. */
   notified_at: string | null
   /** Populated only by getSubmission() (grading view) */
@@ -413,6 +415,8 @@ export interface QuestionStat {
   question_id: number
   question_content: string
   question_type: string
+  question_set_id: number
+  set_name: string
   correct_count: number
   total_attempts: number
   max_points: number

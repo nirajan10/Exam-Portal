@@ -400,7 +400,7 @@ export default function ExamCreate() {
               border: `1px solid ${isDark ? '#475569' : '#d1d5db'}`,
               borderRadius: 6, fontSize: 14, cursor: 'pointer',
             }}>
-              Cancel
+              ← Back
             </button>
           </Link>
         </div>
