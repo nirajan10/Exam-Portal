@@ -985,11 +985,12 @@ export default function ResultsAnalytics({ exam, submissions, examId }: Props) {
                     )}
                     <td style={td}>
                       <span style={{
-                        fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 9999,
+                        fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 9999,
+                        whiteSpace: 'nowrap',
                         background: s.status === 'graded' ? '#dcfce7' : '#fef3c7',
                         color: s.status === 'graded' ? '#15803d' : '#92400e',
                       }}>
-                        {s.status === 'graded' ? 'Graded' : 'Pending'}
+                        {s.status === 'graded' ? '✓ Graded' : '⏳ Pending'}
                       </span>
                     </td>
                     <td style={{ ...td, fontSize: 12, color: textMut, whiteSpace: 'nowrap' }}>

@@ -204,8 +204,6 @@ func (h *Handler) SubmitExam(c *fiber.Ctx) error {
 				continue
 			}
 			q, exists := questionMap[a.QuestionID]
-			// An empty string or empty JSON array means the student didn't answer.
-			unanswered := a.Answer == "" || a.Answer == "[]"
 			var score *float64
 			if exists {
 				switch q.Type {
@@ -215,14 +213,8 @@ func (h *Handler) SubmitExam(c *fiber.Ctx) error {
 					score = &s
 					totalScore += s
 				default:
-					if unanswered {
-						// Nothing to manually grade — award 0 automatically.
-						zero := 0.0
-						score = &zero
-					} else {
-						// theory/code with content: requires manual grading.
-						hasPending = true
-					}
+					// theory/code always requires teacher review, even if blank.
+					hasPending = true
 				}
 			}
 			ans := models.SubmissionAnswer{
@@ -739,7 +731,6 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 				continue
 			}
 			q, exists := questionMap[a.QuestionID]
-			unanswered := a.Answer == "" || a.Answer == "[]"
 			var score *float64
 			if exists {
 				switch q.Type {
@@ -748,12 +739,8 @@ func (h *Handler) runOfflineImportTx(payload offlinePayload) (models.Submission,
 					score = &s
 					totalScore += s
 				default:
-					if unanswered {
-						zero := 0.0
-						score = &zero
-					} else {
-						hasPending = true
-					}
+					// theory/code always requires teacher review, even if blank.
+					hasPending = true
 				}
 			}
 			if err := tx.Create(&models.SubmissionAnswer{

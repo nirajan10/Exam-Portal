@@ -977,6 +977,7 @@ export default function ExamView() {
   const [mailConfigured, setMailConfigured] = useState(false)
   const [sendingReports, setSendingReports] = useState<Set<number>>(new Set())
   const [bulkSending, setBulkSending] = useState(false)
+  const [showStatusInfo, setShowStatusInfo] = useState(false)
 
   // Dark-mode aware card background for submissions table
   const rowBg = isDark ? '#1e293b' : 'white'
@@ -1820,7 +1821,62 @@ export default function ExamView() {
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Set</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Email</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Score</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Status</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      Status
+                      <span
+                        style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+                        onMouseEnter={() => setShowStatusInfo(true)}
+                        onMouseLeave={() => setShowStatusInfo(false)}
+                      >
+                        <span style={{
+                          width: 15, height: 15, borderRadius: '50%', fontSize: 10, fontWeight: 700,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          background: isDark ? '#334155' : '#e2e8f0',
+                          color: isDark ? '#94a3b8' : '#6b7280',
+                          cursor: 'default', userSelect: 'none', lineHeight: 1,
+                        }}>i</span>
+                        {showStatusInfo && (
+                          <div style={{
+                            position: 'absolute', top: '120%', left: '50%', transform: 'translateX(-50%)',
+                            background: isDark ? '#1e293b' : '#fff',
+                            border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                            borderRadius: 8, padding: '10px 14px',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                            zIndex: 50, minWidth: 170, whiteSpace: 'nowrap',
+                            fontSize: 12, fontWeight: 400,
+                            color: isDark ? '#e2e8f0' : '#374151',
+                          }}>
+                            <div style={{ fontWeight: 700, marginBottom: 7, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: isDark ? '#94a3b8' : '#6b7280' }}>Grading Status</div>
+                            {([
+                              ['⏳ Pending', 'Awaiting teacher review'],
+                              ['🤖 AI',     'Graded by AI'],
+                              ['👤 Human',  'Graded by teacher'],
+                              ['🤝 Both',   'Graded by AI + teacher'],
+                              ['✓ Graded',  'Auto-graded (MCQ/MRQ)'],
+                            ] as [string, string][]).map(([badge, desc]) => (
+                              <div key={badge} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                                <span style={{
+                                  fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 9999,
+                                  background: badge.startsWith('⏳') ? '#fef3c7'
+                                    : badge.startsWith('🤖') ? '#ede9fe'
+                                    : badge.startsWith('👤') ? '#dcfce7'
+                                    : badge.startsWith('🤝') ? '#e0f2fe'
+                                    : '#dcfce7',
+                                  color: badge.startsWith('⏳') ? '#92400e'
+                                    : badge.startsWith('🤖') ? '#6d28d9'
+                                    : badge.startsWith('👤') ? '#15803d'
+                                    : badge.startsWith('🤝') ? '#0369a1'
+                                    : '#15803d',
+                                }}>{badge}</span>
+                                <span style={{ color: isDark ? '#94a3b8' : '#6b7280' }}>{desc}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </span>
+                    </div>
+                  </th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Submitted</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Report</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: isDark ? '#cbd5e1' : '#374151' }}>Action</th>
@@ -1859,7 +1915,8 @@ export default function ExamView() {
                     <td style={{ padding: '10px 12px', fontWeight: 700, color: '#1a73e8' }}>{s.total_score}</td>
                     <td style={{ padding: '10px 12px' }}>
                       <span style={{
-                        fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 9999,
+                        fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 9999,
+                        whiteSpace: 'nowrap',
                         background: s.status === 'graded'
                           ? s.graded_by === 'ai' ? '#ede9fe' : s.graded_by === 'both' ? '#e0f2fe' : '#dcfce7'
                           : '#fef3c7',
@@ -1867,11 +1924,11 @@ export default function ExamView() {
                           ? s.graded_by === 'ai' ? '#6d28d9' : s.graded_by === 'both' ? '#0369a1' : '#15803d'
                           : '#92400e',
                       }}>
-                        {s.status !== 'graded' ? 'Pending'
-                          : s.graded_by === 'ai' ? 'Graded by AI'
-                          : s.graded_by === 'both' ? 'Graded by Both'
-                          : s.graded_by === 'human' ? 'Graded by Human'
-                          : 'Graded'}
+                        {s.status !== 'graded' ? '⏳ Pending'
+                          : s.graded_by === 'ai' ? '🤖 AI'
+                          : s.graded_by === 'both' ? '🤝 Both'
+                          : s.graded_by === 'human' ? '👤 Human'
+                          : '✓ Graded'}
                       </span>
                     </td>
                     <td style={{ padding: '10px 12px', color: mutedText, fontSize: 13 }}>

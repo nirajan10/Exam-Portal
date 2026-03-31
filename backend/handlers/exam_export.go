@@ -204,25 +204,40 @@ func (h *Handler) ImportWholeExam(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
 	}
 
-	var payload wholeExamPayload
-	if err := c.BodyParser(&payload); err != nil {
+	// Parse into raw form first to extract original JSON bytes for hash verification.
+	// This avoids hash mismatches when the Go struct has new fields that weren't in
+	// the exported file — re-marshaling would inject zero-value fields and change the hash.
+	var raw struct {
+		Version      int             `json:"v"`
+		Exam         json.RawMessage `json:"exam"`
+		QuestionSets json.RawMessage `json:"question_sets"`
+		Submissions  json.RawMessage `json:"submissions"`
+		Hash         string          `json:"hash"`
+	}
+	if err := c.BodyParser(&raw); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid file format")
 	}
-	if payload.Version != 1 {
+	if raw.Version != 1 {
 		return fiber.NewError(fiber.StatusBadRequest, "unsupported file version")
 	}
 
-	// Verify hash.
+	// Verify hash using the original JSON bytes from the file.
 	contentJSON, _ := json.Marshal(struct {
-		Exam         exportExam          `json:"exam"`
-		QuestionSets []exportQuestionSet `json:"question_sets"`
-		Submissions  []exportSubmission  `json:"submissions"`
-	}{payload.Exam, payload.QuestionSets, payload.Submissions})
+		Exam         json.RawMessage `json:"exam"`
+		QuestionSets json.RawMessage `json:"question_sets"`
+		Submissions  json.RawMessage `json:"submissions"`
+	}{raw.Exam, raw.QuestionSets, raw.Submissions})
 
 	expected := computeWholeExamHash(contentJSON)
-	if expected != payload.Hash {
+	if expected != raw.Hash {
 		return fiber.NewError(fiber.StatusUnprocessableEntity,
 			"tamper detected: hash mismatch — the file has been modified")
+	}
+
+	// Now unmarshal into the typed payload for actual import logic.
+	var payload wholeExamPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid file format")
 	}
 
 	// Create everything inside a single transaction.
