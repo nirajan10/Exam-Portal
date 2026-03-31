@@ -264,7 +264,7 @@ func (h *Handler) ListSubmissions(c *fiber.Ctx) error {
 	}
 
 	var submissions []models.Submission
-	h.db.Where("exam_id = ?", examID).Order("student_name asc").Find(&submissions)
+	h.db.Where("exam_id = ?", examID).Order("LOWER(student_name) ASC").Find(&submissions)
 	return c.JSON(submissions)
 }
 

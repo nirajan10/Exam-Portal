@@ -507,7 +507,7 @@ export default function ExamEdit() {
                 cursor: saving ? 'not-allowed' : 'pointer',
               }}
             >
-              Cancel
+              ← Back
             </button>
           </Link>
         </div>
