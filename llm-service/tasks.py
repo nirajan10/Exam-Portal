@@ -70,23 +70,24 @@ def _get_llm():
 
 # ── Prompt builders (duplicated from main.py to keep worker self-contained) ─
 
-SYSTEM_PROMPT = """You are a fair and accurate exam grader. You evaluate student answers and return a JSON score.
+SYSTEM_PROMPT = """You are a lenient and encouraging exam grader. You evaluate student answers and return a JSON score.
 
 IMPORTANT RULES:
-- Read the question and answer carefully before judging.
+- Be lenient — when in doubt, give the benefit of the doubt to the student.
+- Ignore ALL grammar, spelling, and punctuation mistakes. Focus only on the meaning and knowledge shown.
 - A correct answer MUST receive full or near-full marks.
-- A partially correct answer should receive partial marks.
-- Only give 0 marks if the answer is completely wrong or empty.
-- Be fair — do not penalize correct answers.
-- Ignore minor grammatical or spelling errors if the answer is otherwise correct.
-- Expect answers according to the question's max points, and grade proportionally. No need to be extremely precise, just a reasonable estimate.
+- Award partial marks generously for any genuine attempt, even if incomplete or imprecise.
+- Never give 0 marks if the student has made a real attempt and shown any relevant understanding.
+- Only give 0 marks if the answer is completely blank, entirely off-topic, or shows zero understanding.
+- Grade proportionally to max points: a low-mark question only needs key points, not exhaustive detail. A high-mark question expects more depth.
+- Small mistakes, minor omissions, and imprecise wording should not significantly reduce marks.
 
 You MUST respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {"score": <number>, "feedback": "<brief feedback>"}"""
 
 
 def _build_theory_prompt(req: dict) -> str:
-    return f"""Grade this theory question.
+    return f"""Grade this theory question leniently.
 
 Question: {req['question_content']}
 
@@ -94,7 +95,13 @@ Maximum Marks: {req['max_points']}
 
 Student's Answer: {req['student_answer']}
 
-Evaluate correctness, completeness, and clarity. Correct the spelling if necessary. A correct answer should get full marks.
+Grading instructions:
+- Ignore all grammar, spelling, and punctuation errors — focus only on knowledge and meaning.
+- Award marks for any correct information shown, even if the answer is incomplete or poorly worded.
+- For low-mark questions ({req['max_points']} mark(s)), a brief correct answer is sufficient — do not require exhaustive detail.
+- For higher-mark questions, expect more depth but still be lenient on minor gaps.
+- Give partial marks generously for any genuine attempt showing relevant understanding.
+- Only give 0 if the answer is completely blank or totally irrelevant.
 
 Respond with ONLY: {{"score": <0 to {req['max_points']}>, "feedback": "<brief feedback>"}}"""
 
@@ -129,15 +136,15 @@ Student's Code:
                 prompt += f"Stderr:\n```\n{er['stderr'][:1000]}\n```\n"
             prompt += "\n"
 
-    prompt += f"""Grading criteria:
+    prompt += f"""Grading criteria (be lenient):
 1. The question REQUIRES {lang}. If the student wrote code in a different programming language, give 0 marks regardless of correctness.
-2. Does the code solve the problem correctly?
-3. Does it compile/run without errors?
-4. Is the logic sound (not just hardcoded output)?
-5. If code simply prints expected output without computing, give very low marks.
-6. A working correct solution should get full marks.
-7. If the code is partially correct (e.g., correct logic but minor bugs), award partial marks accordingly.
-8. Be lenient on minor issues if the overall approach is correct (cut 0.5 for a small bugs).
+2. Does the code solve the problem correctly? A working correct solution gets full marks.
+3. If the logic is correct but there are minor bugs (off-by-one, small syntax error), deduct at most 0.5–1 mark.
+4. If the code is partially correct or shows the right approach with gaps, award generous partial marks.
+5. Give marks for any genuine attempt that demonstrates relevant understanding, even if it doesn't run.
+6. Hardcoded output with no logic should get very low marks, but still award something for the attempt.
+7. Do NOT penalize for code style, naming conventions, or minor inefficiencies.
+8. For low-mark questions ({req['max_points']} mark(s)), a simple working solution is fully sufficient.
 
 Respond with ONLY: {{"score": <0 to {req['max_points']}>, "feedback": "<brief feedback>"}}"""
 
