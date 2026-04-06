@@ -17,7 +17,7 @@ A secure online exam platform where teachers create and manage exams with MCQ, M
 - **Offline submission backup** — students download an encrypted backup of their answers; teachers reimport via SHA-256 tamper-checked upload
 - **PIN-protected exams** — optional access code required to join
 - **Teacher feedback** — teachers submit bug reports, suggestions, usability, performance, or general feedback; admins review and manage from a dedicated panel
-- **AI auto-grading** — local LLM (Qwen2.5-3B-Instruct) grades theory and code answers; single or bulk grading via Celery async queue; toggleable by superadmin
+- **AI auto-grading** — local LLM (qwen2.5-7b-instruct-q3_k_m.gguf) grades theory and code answers; single or bulk grading via Celery async queue; toggleable by superadmin
 - **Login brute-force protection** — 5 failed attempts per IP triggers a 15-minute lockout
 - **Dark mode** — system-wide theme toggle via CSS custom properties; all interactive states (MCQ selection, correct-answer badges) adapt to dark backgrounds
 - **Force password change** — admin-created teacher accounts require password change on first login
