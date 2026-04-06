@@ -1,7 +1,7 @@
 """
 Local LLM Grading Service for Exam Portal.
 
-Runs a quantized model (Qwen2.5-3B-Instruct) via llama-cpp-python
+Runs a quantized GGUF model (Qwen2.5-7B-Instruct) via llama-cpp-python
 and exposes a FastAPI endpoint for grading theory and code answers.
 """
 
@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,24 +21,28 @@ logger = logging.getLogger("llm-service")
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-MODEL_REPO = os.getenv("MODEL_REPO", "Qwen/Qwen2.5-3B-Instruct-GGUF")
-MODEL_FILE = os.getenv("MODEL_FILE", "qwen2.5-3b-instruct-q4_k_m.gguf")
+MODEL_REPO = os.getenv("MODEL_REPO", "Qwen/Qwen2.5-7B-Instruct-GGUF")
+MODEL_FILE = os.getenv("MODEL_FILE", "qwen2.5-7b-instruct-q3_k_m.gguf")
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "/app/models"))
 N_CTX = int(os.getenv("N_CTX", "4096"))
 N_THREADS = int(os.getenv("N_THREADS", "4"))
+N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "-1"))  # -1 = all layers on GPU
 
 # ── Global model reference ───────────────────────────────────────────────────
 
 llm = None
+loading_status = "starting"  # starting → downloading → loading → ready / error
 
 
 def download_model() -> Path:
     """Download the GGUF model file if not already cached."""
+    global loading_status
     model_path = MODEL_DIR / MODEL_FILE
     if model_path.exists():
         logger.info("Model already cached at %s", model_path)
         return model_path
 
+    loading_status = "downloading"
     logger.info("Downloading %s from %s …", MODEL_FILE, MODEL_REPO)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +52,6 @@ def download_model() -> Path:
         repo_id=MODEL_REPO,
         filename=MODEL_FILE,
         local_dir=str(MODEL_DIR),
-        local_dir_use_symlinks=False,
     )
     logger.info("Model downloaded to %s", path)
     return Path(path)
@@ -55,25 +59,33 @@ def download_model() -> Path:
 
 def load_model():
     """Load the GGUF model into llama-cpp-python."""
-    global llm
-    model_path = download_model()
+    global llm, loading_status
+    try:
+        model_path = download_model()
 
-    from llama_cpp import Llama
+        loading_status = "loading"
+        from llama_cpp import Llama
 
-    logger.info("Loading model (n_ctx=%d, n_threads=%d) …", N_CTX, N_THREADS)
-    llm = Llama(
-        model_path=str(model_path),
-        n_ctx=N_CTX,
-        n_threads=N_THREADS,
-        verbose=False,
-        chat_format="chatml",
-    )
-    logger.info("Model loaded successfully.")
+        logger.info("Loading model (n_ctx=%d, n_threads=%d, n_gpu_layers=%d) …", N_CTX, N_THREADS, N_GPU_LAYERS)
+        llm = Llama(
+            model_path=str(model_path),
+            n_ctx=N_CTX,
+            n_threads=N_THREADS,
+            n_gpu_layers=N_GPU_LAYERS,
+            flash_attn=True,
+            verbose=False,
+            chat_format="chatml",
+        )
+        loading_status = "ready"
+        logger.info("Model loaded successfully.")
+    except Exception:
+        loading_status = "error"
+        logger.exception("Failed to load model")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    load_model()
+    threading.Thread(target=load_model, daemon=True).start()
     yield
 
 
@@ -105,24 +117,26 @@ class GradeResponse(BaseModel):
 
 # ── Prompt builders ──────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a lenient and encouraging exam grader. You evaluate student answers and return a JSON score.
+SYSTEM_PROMPT = """You are a lenient and encouraging exam grader. Always lean toward giving MORE marks, not fewer.
 
-IMPORTANT RULES:
-- Be lenient — when in doubt, give the benefit of the doubt to the student.
-- Ignore ALL grammar, spelling, and punctuation mistakes. Focus only on the meaning and knowledge shown.
-- A correct answer MUST receive full or near-full marks.
-- Award partial marks generously for any genuine attempt, even if incomplete or imprecise.
-- Never give 0 marks if the student has made a real attempt and shown any relevant understanding.
-- Only give 0 marks if the answer is completely blank, entirely off-topic, or shows zero understanding.
-- Grade proportionally to max points: a low-mark question only needs key points, not exhaustive detail. A high-mark question expects more depth.
-- Small mistakes, minor omissions, and imprecise wording should not significantly reduce marks.
+GRADING PHILOSOPHY — three tiers:
+1. FULL or HIGH marks: The answer is correct or mostly correct. Ignore grammar, spelling, punctuation, and minor missing details — these are NEVER reasons to deduct. If the student shows they understand the concept, even partially or informally, give full or near-full marks. When in doubt, give full marks.
+2. MODERATE marks (around half): The answer adds SOME relevant information but is significantly incomplete or only loosely related. Still give at least half marks if the student shows any relevant understanding.
+3. LOW or ZERO marks: ONLY when the answer provides NO useful information at all — it merely restates the question in different words, is entirely off-topic, or is blank.
+
+IMPORTANT:
+- Pay attention to what the question asks: "how" expects a process/method, "what" expects a definition, "why" expects a reason, "list/name" expects specific items. Check if the student addressed what was asked.
+- An answer that just restates the question without adding new information is NOT a valid answer.
+- An answer that is correct but brief, informal, or has grammar mistakes IS a valid answer — give full or high marks.
+- Grade proportionally to max points: a 1-mark question needs just one key insight; a 5-mark question needs more depth but does NOT require a perfect textbook answer.
+- If you are unsure between two scores, pick the one that best reflects what the student demonstrated.
 
 You MUST respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {"score": <number>, "feedback": "<brief feedback>"}"""
 
 
 def build_theory_prompt(req: GradeRequest) -> str:
-    return f"""Grade this theory question leniently.
+    return f"""Grade this theory answer.
 
 Question: {req.question_content}
 
@@ -130,13 +144,20 @@ Maximum Marks: {req.max_points}
 
 Student's Answer: {req.student_answer}
 
-Grading instructions:
-- Ignore all grammar, spelling, and punctuation errors — focus only on knowledge and meaning.
-- Award marks for any correct information shown, even if the answer is incomplete or poorly worded.
-- For low-mark questions ({req.max_points} mark(s)), a brief correct answer is sufficient — do not require exhaustive detail.
-- For higher-mark questions, expect more depth but still be lenient on minor gaps.
-- Give partial marks generously for any genuine attempt showing relevant understanding.
-- Only give 0 if the answer is completely blank or totally irrelevant.
+STEP 1 — Determine what the question is asking:
+- "How" → expects an explanation of mechanism, process, or method.
+- "What" → expects a definition, description, or identification.
+- "Why" → expects a reason, justification, or rationale.
+- "List/Name/State" → expects specific items or facts.
+- "Explain/Describe" → expects a clear explanation with some depth.
+Then check: did the student actually answer what was asked?
+
+STEP 2 — Grade using these tiers:
+- FULL MARKS ({req.max_points}/{req.max_points}): The answer is correct or mostly correct. Ignore grammar, spelling, and minor gaps. A brief but correct answer is enough for {req.max_points} mark(s). If the student clearly understands the concept, give full marks even if the explanation isn't perfect.
+- MODERATE MARKS (around half): The answer adds some relevant information beyond the question but is significantly incomplete. Still give at least half marks for any relevant understanding shown.
+- LOW/ZERO MARKS: ONLY when the answer adds NO information beyond restating the question, or is completely off-topic or blank.
+
+Key rule: Compare the answer against the question — if the answer does not add any information that wasn't already in the question itself, give low or zero marks. But if it adds even a little correct information, give at least moderate marks.
 
 Respond with ONLY: {{"score": <0 to {req.max_points}>, "feedback": "<brief feedback>"}}"""
 
@@ -171,15 +192,15 @@ Student's Code:
                 prompt += f"Stderr:\n```\n{er.stderr[:1000]}\n```\n"
             prompt += "\n"
 
-    prompt += f"""Grading criteria (be lenient):
-1. The question REQUIRES {lang}. If the student wrote code in a different programming language, give 0 marks regardless of correctness.
-2. Does the code solve the problem correctly? A working correct solution gets full marks.
-3. If the logic is correct but there are minor bugs (off-by-one, small syntax error), deduct at most 0.5–1 mark.
-4. If the code is partially correct or shows the right approach with gaps, award generous partial marks.
-5. Give marks for any genuine attempt that demonstrates relevant understanding, even if it doesn't run.
-6. Hardcoded output with no logic should get very low marks, but still award something for the attempt.
-7. Do NOT penalize for code style, naming conventions, or minor inefficiencies.
-8. For low-mark questions ({req.max_points} mark(s)), a simple working solution is fully sufficient.
+    prompt += f"""Grading rules:
+1. LANGUAGE CHECK: The question REQUIRES {lang}. If the student wrote in a completely different language, give 0 marks.
+2. FULL MARKS ({req.max_points}/{req.max_points}): Code is correct or nearly correct. Do not deduct for style, naming, or minor inefficiency. Minor bugs (off-by-one, small typo, missing edge case) — give full marks or deduct at most 0.5.
+3. HIGH MARKS: Logic and approach are correct but has a small syntax error or doesn't fully compile — give nearly full marks.
+4. MODERATE MARKS: Partially correct code that shows the right approach but has significant gaps.
+5. LOW MARKS: Code shows minimal understanding or is mostly hardcoded output with no real logic.
+6. ZERO: Completely wrong language, blank, or no relevant code at all.
+7. For a {req.max_points}-mark question, a simple working solution is fully sufficient.
+8. When unsure whether to deduct, favor the student.
 
 Respond with ONLY: {{"score": <0 to {req.max_points}>, "feedback": "<brief feedback>"}}"""
 
@@ -192,8 +213,12 @@ SCORE_RE = re.compile(r'\{\s*"score"\s*:\s*([\d.]+)\s*,\s*"feedback"\s*:\s*"([^"
 
 
 def parse_response(text: str, max_points: int) -> GradeResponse:
-    """Parse the LLM output into a GradeResponse, with fallback regex."""
-    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    """Parse the LLM output into a GradeResponse, with fallback regex.
+
+    Strips <think>...</think> blocks before parsing.
+    """
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
     # Try direct JSON parse.
     try:
@@ -220,8 +245,8 @@ def parse_response(text: str, max_points: int) -> GradeResponse:
 @app.get("/health")
 def health():
     if llm is None:
-        raise HTTPException(503, "Model not loaded")
-    return {"status": "ok", "model": MODEL_FILE}
+        return {"status": loading_status, "model": MODEL_FILE, "ready": False}
+    return {"status": "ready", "model": MODEL_FILE, "ready": True}
 
 
 @app.post("/grade", response_model=GradeResponse)
@@ -296,7 +321,6 @@ def grade_batch(req: BatchGradeRequest):
     task_map: dict[str, str] = {}
     for item in req.items:
         payload = item.model_dump()
-        # Convert execution_result from Pydantic model to plain dict for JSON serialization.
         if payload.get("execution_result") is not None:
             payload["execution_result"] = dict(payload["execution_result"])
         task = grade_answer.delay(payload)
@@ -310,10 +334,7 @@ class TaskStatusRequest(BaseModel):
 
 @app.post("/grade/status")
 def grade_status(req: TaskStatusRequest):
-    """Check the status of one or more Celery tasks.
-
-    Returns a dict of task_id → {state, result} for each requested task.
-    """
+    """Check the status of one or more Celery tasks."""
     results: dict[str, dict] = {}
     for tid in req.task_ids:
         ar = _celery_app.AsyncResult(tid)

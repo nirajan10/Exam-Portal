@@ -56,6 +56,16 @@ services:
     restart: unless-stopped
     environment:
       REDIS_URL: redis://redis:6379/0
+      MODEL_REPO: Qwen/Qwen2.5-7B-Instruct-GGUF
+      MODEL_FILE: qwen2.5-7b-instruct-q3_k_m.gguf
+      N_GPU_LAYERS: "-1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     volumes:
       - llm-models:/app/models
     depends_on:
