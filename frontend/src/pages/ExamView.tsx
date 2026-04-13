@@ -1146,10 +1146,30 @@ export default function ExamView() {
   }
 
   const handleSendAllReports = async () => {
-    if (!id) return
+    if (!id || !exam) return
     setBulkSending(true)
     try {
-      const res = await sendAllReports(Number(id))
+      // Generate the rich browser PDF for every pending submission in parallel,
+      // matching exactly what handleSendReport does for individual sends.
+      const pending = submissions.filter(s => s.status === 'graded' && !s.notified_at)
+      const pdfEntries = await Promise.all(
+        pending.map(async (sub) => {
+          try {
+            const fullSub = await getSubmission(sub.id)
+            const blob = await generateStudentPDF(exam, fullSub)
+            const buf = await blob.arrayBuffer()
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+            return [sub.id, b64] as [number, string]
+          } catch {
+            return [sub.id, ''] as [number, string]
+          }
+        })
+      )
+      const pdfs: Record<number, string> = Object.fromEntries(
+        pdfEntries.filter(([, b64]) => b64 !== '')
+      )
+
+      const res = await sendAllReports(Number(id), pdfs)
       if (res.queued === 0) {
         showToast('No pending reports — all graded submissions have already been notified.', 'success')
       } else {

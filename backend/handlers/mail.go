@@ -230,6 +230,7 @@ func (h *Handler) SendReport(c *fiber.Ctx) error {
 // of an exam. The HTTP call returns immediately (202) while a goroutine sends
 // the emails in the background.
 // POST /api/reports/send-all?exam_id=N
+// Body (optional): { "pdfs": { "<submissionID>": "<base64 PDF>" } }
 func (h *Handler) SendAllReports(c *fiber.Ctx) error {
 	teacherID, err := middleware.ExtractTeacherID(c)
 	if err != nil {
@@ -240,6 +241,12 @@ func (h *Handler) SendAllReports(c *fiber.Ctx) error {
 	if examID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "exam_id query param is required")
 	}
+
+	// Optional browser-generated PDFs keyed by submission ID string.
+	var reqBody struct {
+		PDFs map[string]string `json:"pdfs"`
+	}
+	_ = c.BodyParser(&reqBody)
 
 	var exam models.Exam
 	if err := h.db.Where("id = ? AND teacher_id = ?", examID, teacherID).First(&exam).Error; err != nil {
@@ -277,6 +284,7 @@ func (h *Handler) SendAllReports(c *fiber.Ctx) error {
 	examTitle := exam.Title
 	pdfFilename := "report-" + strings.ReplaceAll(strings.ToLower(examTitle), " ", "-") + ".pdf"
 
+	browserPDFs := reqBody.PDFs // captured by the goroutine
 	go func() {
 		for _, sub := range subs {
 			maxScore := setMaxScore[sub.QuestionSetID]
@@ -284,13 +292,27 @@ func (h *Handler) SendAllReports(c *fiber.Ctx) error {
 				maxScore = globalMax
 			}
 			htmlBody := buildReportEmail(sub.StudentName, examTitle, sub.TotalScore, maxScore, sub.Answers, qMap)
-			pdfData, pdfErr := buildReportPDF(sub.StudentName, examTitle, sub.TotalScore, maxScore, sub.SubmittedAt, sub.Answers, qMap)
-			if pdfErr != nil {
-				log.Printf("mail: PDF generation failed for submission %d: %v", sub.ID, pdfErr)
-				pdfData = nil
-			}
-			subject := "[ExamPortal] Your Report for " + examTitle
 
+			// Prefer the browser-generated PDF (same rich format as individual send).
+			// Fall back to server-side generation only when none was provided.
+			var pdfData []byte
+			if b64, ok := browserPDFs[strconv.Itoa(int(sub.ID))]; ok && b64 != "" {
+				if decoded, decErr := base64.StdEncoding.DecodeString(b64); decErr == nil {
+					pdfData = decoded
+				} else {
+					log.Printf("mail: invalid base64 PDF for submission %d, falling back: %v", sub.ID, decErr)
+				}
+			}
+			if pdfData == nil {
+				var pdfErr error
+				pdfData, pdfErr = buildReportPDF(sub.StudentName, examTitle, sub.TotalScore, maxScore, sub.SubmittedAt, sub.Answers, qMap)
+				if pdfErr != nil {
+					log.Printf("mail: PDF generation failed for submission %d: %v", sub.ID, pdfErr)
+					pdfData = nil
+				}
+			}
+
+			subject := "[ExamPortal] Your Report for " + examTitle
 			if err := smtpSend(senderName, fromEmail, appPassword, sub.StudentEmail, subject, htmlBody, pdfData, pdfFilename); err != nil {
 				log.Printf("mail: send failed for submission %d (%s): %v", sub.ID, sub.StudentEmail, err)
 				continue

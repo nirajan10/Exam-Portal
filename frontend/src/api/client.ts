@@ -469,9 +469,10 @@ export const testMailConnection = (): Promise<{ sent_to: string }> =>
 export const sendReport = (submissionId: number, pdfBase64?: string): Promise<Submission> =>
   api.post<Submission>(`/reports/send/${submissionId}`, pdfBase64 ? { pdf_data: pdfBase64 } : undefined).then(r => r.data)
 
-/** Queue reports for all graded, unnotified submissions of an exam (background). */
-export const sendAllReports = (examId: number): Promise<{ queued: number; message: string }> =>
-  api.post<{ queued: number; message: string }>(`/reports/send-all?exam_id=${examId}`).then(r => r.data)
+/** Queue reports for all graded, unnotified submissions of an exam (background).
+ *  pdfs: map of submissionId → base64-encoded browser-generated PDF. */
+export const sendAllReports = (examId: number, pdfs: Record<number, string>): Promise<{ queued: number; message: string }> =>
+  api.post<{ queued: number; message: string }>(`/reports/send-all?exam_id=${examId}`, { pdfs }).then(r => r.data)
 
 // Student execution — public, checks exam's max_code_runs on the backend.
 // `stdin` is optional program input; when non-empty the backend uses base64-embed
